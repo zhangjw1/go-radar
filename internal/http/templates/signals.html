@@ -1,0 +1,101 @@
+{{define "signals.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Signals</h1>
+    <div class="page-subtitle">这里汇总所有扫描器的信号，支持按来源、市场、类型、优先级和时间范围过滤。</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">
+    <h2>快速切换来源</h2>
+    <span class="soft-pill">雷达入口</span>
+  </div>
+  <div class="subtle-grid">
+    {{range sourceOrder}}
+    <a href="/signals?source={{.}}" class="signal-meta-card" style="text-decoration:none;color:inherit;">
+      <h4>{{sourceLabel .}}</h4>
+      <div class="small-muted">只查看这一路雷达的信号。</div>
+    </a>
+    {{end}}
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h2>信号列表</h2>
+  <p class="muted">这里汇总所有扫描器的信号。`s3` 偏合约热度确认，`s5` 偏链上早期发现。</p>
+  <form class="filters" method="get">
+    <label>来源
+      <select name="source">
+        <option value="">全部来源</option>
+        {{range .FilterOptions.Sources}}
+        <option value="{{.}}" {{if eq $.Filters.Source .}}selected{{end}}>{{sourceLabel .}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>市场 / 链
+      <select name="chain">
+        <option value="">全部市场</option>
+        {{range .FilterOptions.Chains}}
+        <option value="{{.}}" {{if eq $.Filters.Chain .}}selected{{end}}>{{chainLabel .}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>类型
+      <select name="signal_type">
+        <option value="">全部类型</option>
+        {{range .FilterOptions.SignalTypes}}
+        <option value="{{.}}" {{if eq $.Filters.SignalType .}}selected{{end}}>{{signalTypeLabel .}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>优先级
+      <select name="priority">
+        <option value="">全部优先级</option>
+        {{range .FilterOptions.Priorities}}
+        <option value="{{.}}" {{if eq $.Filters.Priority .}}selected{{end}}>{{priorityLabel .}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>时间范围
+      <select name="time_range">
+        {{range .FilterOptions.TimeRanges}}
+        <option value="{{.}}" {{if eq $.Filters.TimeRange .}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label><input type="checkbox" name="watchlist_only" value="true" {{if .Filters.WatchlistOnly}}checked{{end}}> 只看观察名单</label>
+    <button type="submit">应用筛选</button>
+    <a href="/signals" class="pill" style="text-decoration:none;">清空</a>
+  </form>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <table>
+    <thead><tr><th>时间</th><th>来源</th><th>标的</th><th>类型</th><th>优先级</th><th>分数</th><th>说明</th></tr></thead>
+    <tbody>
+    {{range .Signals}}
+      <tr>
+        <td>{{formatTime .CreatedAt}}</td>
+        <td><span class="pill source-pill">{{sourceLabel .Source}}</span></td>
+        <td>
+          <a href="/token/{{.Chain}}/{{.Address}}">{{.Symbol}}</a>
+          <span class="table-note">{{chainLabel .Chain}}</span>
+        </td>
+        <td>
+          <span class="pill type-pill">{{signalTypeLabel .SignalType}}</span>
+          <span class="table-note">{{.SignalType}}</span>
+        </td>
+        <td class="{{priorityClass .Priority}}">{{priorityLabel .Priority}}</td>
+        <td>{{formatScore .Score}}</td>
+        <td>{{.Reason}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted">当前筛选条件下没有信号。</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{template "shell_end" .}}
+{{end}}

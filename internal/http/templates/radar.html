@@ -1,0 +1,90 @@
+{{define "radar.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{.Meta.Label}}</h1>
+    <div class="page-subtitle">{{.Meta.Summary}} 重点：{{.Meta.Focus}}</div>
+  </div>
+  <div class="page-actions">
+    <a href="/signals?source={{.Source}}" class="action-link">查看全部信号</a>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-label">最近高优先级</div><div class="stat-value">{{len .RecentHigh}}</div><div class="stat-meta">高 / 中优先级</div></div>
+  <div class="stat-card"><div class="stat-label">24h 已推送</div><div class="stat-value">{{.PushCount24H}}</div><div class="stat-meta">Telegram 记录</div></div>
+  <div class="stat-card"><div class="stat-label">最近任务</div><div class="stat-value">{{if .Runs}}{{statusLabel (index .Runs 0).Status}}{{else}}-{{end}}</div><div class="stat-meta">{{if .Runs}}{{formatTime (index .Runs 0).StartedAt}}{{else}}暂无运行记录{{end}}</div></div>
+  <div class="stat-card"><div class="stat-label">信号类型</div><div class="stat-value">{{len .TypeCounts}}</div><div class="stat-meta">最近 24h</div></div>
+</div>
+
+<div class="two-col" style="margin-top:16px;">
+  <div class="card">
+    <div class="section-title"><h2>最近值得看</h2><span class="soft-pill">最新优先</span></div>
+    <div class="list-card">
+      {{range .RecentHigh}}
+      <div class="list-row">
+        <div><div class="list-primary">{{formatTime .CreatedAt}}</div><div class="list-secondary">{{priorityLabel .Priority}}</div></div>
+        <div><div class="list-primary"><a href="/token/{{.Chain}}/{{.Address}}">{{.Symbol}}</a> - {{signalTypeLabel .SignalType}}</div><div class="list-secondary">{{.Reason}}</div></div>
+        <div class="{{priorityClass .Priority}}">{{formatScore .Score}}</div>
+      </div>
+      {{else}}
+      <div class="small-muted">这一路雷达还没有 high / medium 信号。</div>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>类型分布</h2><span class="soft-pill">24h</span></div>
+    <div class="list-card">
+      {{range .TypeCounts}}
+      <div class="list-row">
+        <div class="list-primary">{{signalTypeLabel .Type}}</div>
+        <div class="list-secondary">{{.Type}}</div>
+        <div>{{.Count}}</div>
+      </div>
+      {{else}}
+      <div class="small-muted">暂无类型统计。</div>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+<div class="two-col" style="margin-top:16px;">
+  <div class="card">
+    <div class="section-title"><h2>最近任务</h2><span class="soft-pill">运行状态</span></div>
+    <table>
+      <thead><tr><th>开始时间</th><th>状态</th><th>信号</th><th>快照</th><th>错误</th></tr></thead>
+      <tbody>
+      {{range .Runs}}
+      <tr><td>{{formatTime .StartedAt}}</td><td>{{statusLabel .Status}}</td><td>{{.SignalCount}}</td><td>{{.SnapshotCount}}</td><td>{{if .Error}}{{.Error}}{{else}}-{{end}}</td></tr>
+      {{else}}
+      <tr><td colspan="5" class="muted">暂无运行记录。</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="section-title"><h2>最近推送 / 错误</h2><span class="soft-pill">辅助信息</span></div>
+    <div class="list-card">
+      {{if .LatestPush}}
+      <div class="list-row">
+        <div class="list-primary">最近 TG 推送</div>
+        <div><div class="list-primary">{{.LatestPush.Symbol}} - {{signalTypeLabel .LatestPush.SignalType}}</div><div class="list-secondary">{{formatTime .LatestPush.PushedAt}}</div></div>
+        <div>{{priorityLabel .LatestPush.Priority}}</div>
+      </div>
+      {{end}}
+      {{range .LatestErrors}}
+      <div class="list-row">
+        <div class="list-primary">错误</div>
+        <div><div class="list-primary">{{formatTime .StartedAt}}</div><div class="list-secondary">{{.Error}}</div></div>
+        <div class="priority-high">error</div>
+      </div>
+      {{else}}
+        {{if not .LatestPush}}<div class="small-muted">暂无推送或错误。</div>{{end}}
+      {{end}}
+    </div>
+  </div>
+</div>
+{{template "shell_end" .}}
+{{end}}

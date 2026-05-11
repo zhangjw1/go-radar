@@ -1,0 +1,65 @@
+{{define "settings.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">运行设置</h1>
+    <div class="page-subtitle">运行参数、代理设置、扫描器开关和调度间隔。</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>运行设置</h2>
+  <p class="muted">保存后会写入 settings 表。Go 调度器开启时，会按这里的开关和间隔运行。</p>
+  <div class="filters" style="margin-bottom:16px;">
+    <form method="post" action="/telegram/test" class="inline">
+      <button type="submit">发送 TG 测试消息</button>
+    </form>
+    {{if eq .TestStatus "ok"}}
+      <span class="pill" style="background:#e9f8ee;color:#137a3b;">{{.TestMessage}}</span>
+    {{else if eq .TestStatus "error"}}
+      <span class="pill" style="background:#fff1f2;color:#be123c;">{{.TestMessage}}</span>
+    {{end}}
+  </div>
+  {{if eq .SaveStatus "ok"}}
+    <div class="pill" style="background:#e9f8ee;color:#137a3b;margin-bottom:16px;">{{.SaveMessage}}</div>
+  {{end}}
+  <form method="post">
+    <table>
+      <thead><tr><th>键</th><th>当前值</th><th>默认值</th><th>覆盖值</th></tr></thead>
+      <tbody>
+      {{range .Rows}}
+        <tr>
+          <td class="mono">{{.Key}}</td>
+          <td>
+            {{if .IsBool}}
+              <select name="{{.Key}}">
+                <option value="true" {{if eq .Value "true"}}selected{{end}}>true</option>
+                <option value="false" {{if eq .Value "false"}}selected{{end}}>false</option>
+              </select>
+            {{else}}
+              <input name="{{.Key}}" value="{{.Value}}">
+            {{end}}
+          </td>
+          <td>{{.Default}}</td>
+          <td>{{.Override}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    <div style="margin-top:16px;">
+      <button type="submit">保存设置</button>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h2>推送策略</h2>
+  <div class="subtle-grid">
+    <div class="signal-meta-card"><h4>S5 链上发现</h4><div class="small-muted">高优先级立即推送；中优先级按批次限额。</div></div>
+    <div class="signal-meta-card"><h4>S3 热度确认</h4><div class="small-muted">高优先级立即推送；其他重要中/高信号可进入摘要逻辑。</div></div>
+    <div class="signal-meta-card"><h4>系统共振</h4><div class="small-muted">跨源共振立即推送，并绕过普通冷却逻辑。</div></div>
+    <div class="signal-meta-card"><h4>观察名单加权</h4><div class="small-muted">观察名单标的使用更短冷却，更容易进入复查。</div></div>
+  </div>
+</div>
+{{template "shell_end" .}}
+{{end}}

@@ -1,0 +1,7 @@
+.env
+radar.db
+radar.db-*
+bin/
+tmp/
+*.exe
+coverage.out

@@ -1,0 +1,165 @@
+{{define "shell_start"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Page.AppName}}</title>
+  <style>
+    :root {
+      --bg: #f3f6fb;
+      --card: #ffffff;
+      --ink: #18212b;
+      --muted: #687586;
+      --line: #d7dde5;
+      --accent: #0b5fff;
+      --green: #0f9d58;
+      --orange: #d97706;
+      --red: #dc2626;
+    }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      background: linear-gradient(180deg, #eef2f8 0%, #f7f9fc 100%);
+      color: var(--ink);
+    }
+    .shell { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 270px;
+      flex: 0 0 270px;
+      background: rgba(255,255,255,0.88);
+      border-right: 1px solid var(--line);
+      padding: 20px 16px;
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    .sidebar-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .brand-mark {
+      width: 40px; height: 40px; border-radius: 14px;
+      background: linear-gradient(135deg, #246bff 0%, #5ba2ff 100%);
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-weight: 700;
+      box-shadow: 0 10px 20px rgba(36, 107, 255, 0.25);
+    }
+    .brand-title { font-size: 24px; font-weight: 800; line-height: 1.1; }
+    .brand-subtitle { color: var(--muted); font-size: 12px; margin-top: 1px; }
+    .sidebar-group { margin-bottom: 16px; }
+    .sidebar-group-title {
+      color: var(--muted); font-size: 12px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      margin-bottom: 6px; padding: 0 8px;
+    }
+    .sidebar-nav { display: flex; flex-direction: column; gap: 6px; }
+    .sidebar-link {
+      text-decoration: none; color: var(--ink);
+      background: transparent; border: 1px solid transparent;
+      border-radius: 12px; padding: 10px 12px; display: block;
+    }
+    .sidebar-link:hover { background: rgba(11,95,255,0.06); border-color: rgba(11,95,255,0.08); }
+    .sidebar-link.active {
+      background: linear-gradient(135deg, rgba(11,95,255,0.14) 0%, rgba(70,144,255,0.08) 100%);
+      border-color: rgba(11,95,255,0.18);
+    }
+    .sidebar-link-title { font-weight: 700; margin-bottom: 2px; font-size: 14px; }
+    .sidebar-link-subtitle { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .main { flex: 1; min-width: 0; padding: 24px 28px 36px 28px; }
+    .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+    .page-title { font-size: 32px; font-weight: 800; margin: 0; line-height: 1.1; }
+    .page-subtitle { color: var(--muted); margin-top: 6px; font-size: 14px; }
+    .page-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .shell a.action-link, .shell .soft-pill {
+      text-decoration: none; color: var(--muted);
+      background: rgba(255,255,255,0.85);
+      border: 1px solid var(--line);
+      border-radius: 999px; padding: 10px 14px;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .grid { display: grid; gap: 16px; }
+    .grid.cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; padding: 18px;
+      box-shadow: 0 10px 25px rgba(20, 31, 48, 0.05);
+    }
+    h1, h2, h3 { margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    .pill { display: inline-block; border-radius: 999px; padding: 4px 10px; font-size: 12px; background: #eef3ff; color: #315fd2; }
+    .source-pill { background: #eef4ff; color: #2054c9; }
+    .type-pill { background: #f4f6f8; color: #334155; }
+    .priority-high { color: var(--red); font-weight: 700; }
+    .priority-medium { color: var(--orange); font-weight: 700; }
+    .priority-low { color: var(--green); font-weight: 700; }
+    form.inline, .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    input, select, textarea, button { border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; font: inherit; background: white; }
+    button { background: var(--accent); color: white; border-color: var(--accent); cursor: pointer; }
+    .muted { color: var(--muted); }
+    .mono { font-family: Consolas, monospace; word-break: break-all; }
+    .subtle-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .signal-meta-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); }
+    .signal-meta-card h4 { margin: 0 0 8px 0; font-size: 15px; }
+    .small-muted { color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .table-note { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+    .stat-card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 14px 24px rgba(20, 31, 48, 0.06); }
+    .stat-label { color: var(--muted); font-size: 13px; margin-top: 8px; }
+    .stat-value { font-size: 34px; font-weight: 800; margin-top: 6px; letter-spacing: -0.02em; }
+    .stat-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .list-card { display: grid; gap: 10px; }
+    .list-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .list-row:last-child { border-bottom: none; }
+    .list-primary { font-weight: 700; }
+    .list-secondary { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .placeholder-panel { min-height: 220px; display: flex; flex-direction: column; justify-content: space-between; }
+    .placeholder-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .placeholder-kpi { border: 1px dashed var(--line); border-radius: 14px; padding: 12px; background: #fafbfd; }
+    .placeholder-kpi-value { font-size: 24px; font-weight: 800; margin-top: 6px; }
+    .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .section-title h2, .section-title h3 { margin: 0; }
+    .two-col { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+    @media (max-width: 900px) {
+      .shell { display: block; }
+      .sidebar { width: auto; min-height: auto; position: static; border-right: none; border-bottom: 1px solid var(--line); }
+      .main { padding: 18px; }
+      .two-col { grid-template-columns: 1fr; }
+      .list-row { grid-template-columns: 1fr; }
+      .placeholder-kpis { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark">R</div>
+        <div>
+          <div class="brand-title">Web3 Radar</div>
+          <div class="brand-subtitle">监控工作台</div>
+        </div>
+      </div>
+      {{range .Page.SidebarGroups}}
+      <div class="sidebar-group">
+        <div class="sidebar-group-title">{{.Title}}</div>
+        <div class="sidebar-nav">
+          {{range .Items}}
+          <a href="{{.Href}}" class="sidebar-link {{if eq $.Page.ActiveNav .Key}}active{{end}}">
+            <div class="sidebar-link-title">{{.Label}}</div>
+            {{if .Subtitle}}<div class="sidebar-link-subtitle">{{.Subtitle}}</div>{{end}}
+          </a>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+    </aside>
+    <main class="main">
+{{end}}
+
+{{define "shell_end"}}
+    </main>
+  </div>
+</body>
+</html>
+{{end}}

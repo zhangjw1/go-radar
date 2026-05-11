@@ -1,0 +1,62 @@
+{{define "token.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{if .Token.Name}}{{.Token.Name}}{{else}}{{.Token.Symbol}}{{end}}</h1>
+    <div class="page-subtitle">单标的研究页，集中展示信号、快照和观察名单状态。</div>
+  </div>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h2>{{if .Token.Name}}{{.Token.Name}}{{else}}{{.Token.Symbol}}{{end}} ({{.Token.Symbol}})</h2>
+    <p class="mono">{{.Token.Address}}</p>
+    <p>链：<span class="pill">{{chainLabel .Token.Chain}}</span></p>
+    <p>主题：{{if .Token.NarrativeTheme}}{{.Token.NarrativeTheme}}{{else}}-{{end}}</p>
+    <p>标签：{{range .Tags}}<span class="pill">{{.}}</span> {{else}}-{{end}}</p>
+    <p>{{if .Token.Description}}{{.Token.Description}}{{else}}暂无描述。{{end}}</p>
+    {{if .SocialLinks}}
+    <p>{{range $key, $value := .SocialLinks}}<span class="pill">{{$key}}</span> <span class="mono">{{$value}}</span><br>{{end}}</p>
+    {{end}}
+  </div>
+  <div class="card">
+    <h3>观察名单</h3>
+    {{if .WatchItem}}
+      <p>状态：<span class="pill">{{statusLabel .WatchItem.Status}}</span></p>
+      <p>备注：{{if .WatchItem.Note}}{{.WatchItem.Note}}{{else}}-{{end}}</p>
+      <p class="muted">更新：{{formatTime .WatchItem.UpdatedAt}}</p>
+    {{else}}
+      <p class="muted">这个标的暂未加入观察名单。</p>
+    {{end}}
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h2>信号</h2>
+  <table>
+    <thead><tr><th>时间</th><th>来源</th><th>类型</th><th>优先级</th><th>分数</th><th>说明</th></tr></thead>
+    <tbody>
+    {{range .Signals}}
+      <tr><td>{{formatTime .CreatedAt}}</td><td>{{sourceLabel .Source}}</td><td>{{signalTypeLabel .SignalType}}</td><td class="{{priorityClass .Priority}}">{{priorityLabel .Priority}}</td><td>{{formatScore .Score}}</td><td>{{.Reason}}</td></tr>
+    {{else}}
+      <tr><td colspan="6" class="muted">这个标的暂无信号。</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h2>快照</h2>
+  <table>
+    <thead><tr><th>时间</th><th>来源</th><th>价格</th><th>市值</th><th>流动性</th><th>成交量</th><th>OI 6h</th><th>费率</th></tr></thead>
+    <tbody>
+    {{range .Snapshots}}
+      <tr><td>{{formatTime .CreatedAt}}</td><td>{{.Source}}</td><td>{{if .Price}}{{.Price}}{{else}}-{{end}}</td><td>{{if .MC}}{{.MC}}{{else}}-{{end}}</td><td>{{if .Liq}}{{.Liq}}{{else}}-{{end}}</td><td>{{if .Volume}}{{.Volume}}{{else}}-{{end}}</td><td>{{if .OID6H}}{{.OID6H}}{{else}}-{{end}}</td><td>{{if .FundingPct}}{{.FundingPct}}{{else}}-{{end}}</td></tr>
+    {{else}}
+      <tr><td colspan="8" class="muted">这个标的暂无快照。</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{template "shell_end" .}}
+{{end}}

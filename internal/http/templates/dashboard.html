@@ -1,0 +1,167 @@
+{{define "dashboard.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">监控总览</h1>
+    <div class="page-subtitle">机会优先的监控首页。先看高优先级、推送和各雷达状态，再决定往下钻哪一路。</div>
+  </div>
+  <div class="page-actions">
+    <a href="/signals" class="action-link">查看全部信号</a>
+    <a href="/jobs" class="action-link">查看任务状态</a>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">最近高优先级</div>
+    <div class="stat-value">{{len .HighSignals}}</div>
+    <div class="stat-meta">high / medium 信号</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">24h Watchlist 命中</div>
+    <div class="stat-value">{{.WatchlistHitCount}}</div>
+    <div class="stat-meta">{{.ActiveWatchlistCount}} 个观察标的</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">最近 TG 推送</div>
+    <div class="stat-value">{{len .LatestPushes}}</div>
+    <div class="stat-meta">最近已推送消息</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">跨源共振</div>
+    <div class="stat-value">{{len .ResonanceSignals}}</div>
+    <div class="stat-meta">同一标的被多个雷达命中</div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div class="section-title">
+    <h2>雷达模块</h2>
+    <span class="soft-pill">24h 信号概览</span>
+  </div>
+  <div class="subtle-grid">
+    {{range sourceOrder}}
+    <a href="/signals?source={{.}}" class="signal-meta-card" style="text-decoration:none;color:inherit;">
+      <h4>{{sourceLabel .}}</h4>
+      <div class="small-muted">与 Python 版对应的 Go 雷达模块。</div>
+      <div class="table-note">24h 信号数：{{index $.SourceCounts .}}</div>
+    </a>
+    {{end}}
+  </div>
+</div>
+
+<div class="two-col" style="margin-top:16px;">
+  <div class="card">
+    <div class="section-title">
+      <h2>最近值得看</h2>
+      <a href="/signals?priority=high" class="action-link">查看高优先级</a>
+    </div>
+    <table>
+      <thead><tr><th>时间</th><th>来源</th><th>标的</th><th>类型</th><th>优先级</th><th>说明</th></tr></thead>
+      <tbody>
+      {{range .HighSignals}}
+        <tr>
+          <td>{{formatTime .CreatedAt}}</td>
+          <td>{{sourceLabel .Source}}</td>
+          <td><a href="/token/{{.Chain}}/{{.Address}}">{{.Symbol}}</a></td>
+          <td>{{signalTypeLabel .SignalType}}</td>
+          <td class="{{priorityClass .Priority}}">{{priorityLabel .Priority}}</td>
+          <td>{{.Reason}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6" class="muted">最近没有高 / 中优先级信号。</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card placeholder-panel">
+    <div>
+      <div class="section-title">
+        <h2>市场概览</h2>
+        <span class="soft-pill">真实统计</span>
+      </div>
+      <div class="placeholder-kpis">
+        <div class="placeholder-kpi">
+          <div class="small-muted">24h 信号总数</div>
+          <div class="placeholder-kpi-value">{{sumCounts .SourceCounts}}</div>
+        </div>
+        <div class="placeholder-kpi">
+          <div class="small-muted">活跃雷达</div>
+          <div class="placeholder-kpi-value">{{len .SourceCounts}}</div>
+        </div>
+        <div class="placeholder-kpi">
+          <div class="small-muted">Go 阶段</div>
+          <div class="placeholder-kpi-value">1</div>
+        </div>
+      </div>
+    </div>
+    <div class="small-muted">这里展示数据库里的真实统计，不造假数据。</div>
+  </div>
+</div>
+
+<div class="two-col" style="margin-top:16px;">
+  <div class="card">
+    <div class="section-title">
+      <h2>最近 TG 推送</h2>
+      <span class="soft-pill">已发送消息</span>
+    </div>
+    <div class="list-card">
+      {{range .LatestPushes}}
+      <div class="list-row">
+        <div>
+          <div class="list-primary">{{formatTime .PushedAt}}</div>
+          <div class="list-secondary">{{sourceLabel .Source}}</div>
+        </div>
+        <div>
+          <div class="list-primary">{{.Symbol}} - {{signalTypeLabel .SignalType}}</div>
+          <div class="list-secondary">{{.Reason}}</div>
+        </div>
+        <div class="{{priorityClass .Priority}}">{{priorityLabel .Priority}}</div>
+      </div>
+      {{else}}
+      <div class="small-muted">最近还没有 TG 推送记录。</div>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>最近错误 / 警告</h2>
+      <span class="soft-pill">系统健康</span>
+    </div>
+    <div class="list-card">
+      {{range .JobErrors}}
+      <div class="list-row">
+        <div>
+            <div class="list-primary">{{formatTime .StartedAt}}</div>
+          <div class="list-secondary">{{sourceLabel .Scanner}}</div>
+        </div>
+        <div>
+          <div class="list-primary">错误</div>
+          <div class="list-secondary">{{.Error}}</div>
+        </div>
+        <div class="priority-high">error</div>
+      </div>
+      {{else}}
+        {{range .JobWarnings}}
+        <div class="list-row">
+          <div>
+            <div class="list-primary">{{formatTime .StartedAt}}</div>
+            <div class="list-secondary">{{sourceLabel .Scanner}}</div>
+          </div>
+          <div>
+            <div class="list-primary">警告</div>
+            <div class="list-secondary">{{index .Warnings 0}}</div>
+          </div>
+          <div class="priority-medium">warn</div>
+        </div>
+        {{else}}
+      <div class="small-muted">当前没有异常或警告，系统状态良好。</div>
+        {{end}}
+      {{end}}
+    </div>
+  </div>
+</div>
+{{template "shell_end" .}}
+{{end}}

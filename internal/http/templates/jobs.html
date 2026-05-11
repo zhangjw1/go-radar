@@ -1,0 +1,40 @@
+{{define "jobs.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">任务状态</h1>
+    <div class="page-subtitle">这里看每一路雷达的调度状态。S1/S2/S3/S5/S7 是来源编号，右侧说明告诉你这一路雷达主要在盯什么。</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>任务状态</h2>
+  <p class="muted">这里展示 Go 调度器间隔和最近扫描运行记录。</p>
+  <table>
+    <thead><tr><th>雷达</th><th>说明</th><th>已实现</th><th>间隔</th><th>下次运行</th><th>最近运行</th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td>{{.Label}}</td>
+        <td>
+          {{.Summary}}
+          <span class="table-note">重点：{{.Focus}}</span>
+        </td>
+        <td>{{if .Implemented}}是{{else}}否{{end}}</td>
+        <td>{{.IntervalSeconds}}s</td>
+        <td>-</td>
+        <td>
+          {{if .LastRun}}
+            {{statusLabel .LastRun.Status}} / {{.LastRun.SignalCount}} 个信号
+            <span class="table-note">{{formatTime .LastRun.StartedAt}}</span>
+          {{else}}
+            -
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{template "shell_end" .}}
+{{end}}

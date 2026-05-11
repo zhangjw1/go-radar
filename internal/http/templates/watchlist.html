@@ -1,0 +1,30 @@
+{{define "watchlist.html"}}
+{{template "shell_start" .}}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">观察名单</h1>
+    <div class="page-subtitle">这里放你想重点跟踪的标的。命中观察名单的信号会有更短冷却和更高复查优先级。</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>观察名单</h2>
+  <table>
+    <thead><tr><th>标的</th><th>链</th><th>状态</th><th>备注</th><th>更新时间</th></tr></thead>
+    <tbody>
+    {{range .Items}}
+      <tr>
+        <td><a href="/token/{{.Chain}}/{{.Address}}">{{if .Symbol}}{{.Symbol}}{{else}}{{.Name}}{{end}}</a><span class="table-note mono">{{.Address}}</span></td>
+        <td>{{chainLabel .Chain}}</td>
+        <td>{{statusLabel .Status}}</td>
+        <td>{{.Note}}</td>
+        <td>{{formatTime .UpdatedAt}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="muted">暂无观察名单。</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{template "shell_end" .}}
+{{end}}
