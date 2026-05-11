@@ -169,35 +169,39 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 				payload := buildTokenPayload(token, discoveryTags, desc)
 				if isFlap {
 					score := ScoreDiscoverySignal(stars, token.MC, token.Liq) + minFloat(flapToken.BuyRatio*5, 8)
-					result.Signals = append(result.Signals, scanners.SignalPayload{
-						Source:     "s5",
-						Chain:      token.Chain,
-						Address:    token.Address,
-						Symbol:     token.Symbol,
-						Name:       token.Name,
-						SignalType: "flap_support",
-						Priority:   StarsToPriority(stars),
-						Score:      round2(score),
-						Reason:     flapToken.SupportReason,
-						Tags:       discoveryTags,
-						Raw:        map[string]any{"safety": safety, "buy_ratio": flapToken.BuyRatio},
-						Token:      payload,
-					})
+					if !s.hasPriorSignal(token.Chain, token.Address, "flap_support") {
+						result.Signals = append(result.Signals, scanners.SignalPayload{
+							Source:     "s5",
+							Chain:      token.Chain,
+							Address:    token.Address,
+							Symbol:     token.Symbol,
+							Name:       token.Name,
+							SignalType: "flap_support",
+							Priority:   StarsToPriority(stars),
+							Score:      round2(score),
+							Reason:     flapToken.SupportReason,
+							Tags:       discoveryTags,
+							Raw:        map[string]any{"safety": safety, "buy_ratio": flapToken.BuyRatio},
+							Token:      payload,
+						})
+					}
 				} else if stars >= 2 {
-					result.Signals = append(result.Signals, scanners.SignalPayload{
-						Source:     "s5",
-						Chain:      token.Chain,
-						Address:    token.Address,
-						Symbol:     token.Symbol,
-						Name:       token.Name,
-						SignalType: "narrative_tagged",
-						Priority:   StarsToPriority(stars),
-						Score:      ScoreDiscoverySignal(stars, token.MC, token.Liq),
-						Reason:     "Narrative tags matched: " + strings.Join(firstStrings(discoveryTags, 3), ", "),
-						Tags:       discoveryTags,
-						Raw:        map[string]any{"safety": safety},
-						Token:      payload,
-					})
+					if !s.hasPriorSignal(token.Chain, token.Address, "narrative_tagged") {
+						result.Signals = append(result.Signals, scanners.SignalPayload{
+							Source:     "s5",
+							Chain:      token.Chain,
+							Address:    token.Address,
+							Symbol:     token.Symbol,
+							Name:       token.Name,
+							SignalType: "narrative_tagged",
+							Priority:   StarsToPriority(stars),
+							Score:      ScoreDiscoverySignal(stars, token.MC, token.Liq),
+							Reason:     "Narrative tags matched: " + strings.Join(firstStrings(discoveryTags, 3), ", "),
+							Tags:       discoveryTags,
+							Raw:        map[string]any{"safety": safety},
+							Token:      payload,
+						})
+					}
 				}
 			}
 		}
@@ -230,8 +234,8 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	}
 
 	result.Metadata = map[string]any{
-		"token_count":    len(tokens),
-		"flap_count":     len(flapTokens),
+		"token_count":     len(tokens),
+		"flap_count":      len(flapTokens),
 		"combined_count":  len(combined),
 		"warnings":        result.Warnings,
 		"scanner_backend": "go",
@@ -366,6 +370,19 @@ func (s *Scanner) recentMomentumRows(chain string, address string, limit int) ([
 		})
 	}
 	return out, nil
+}
+
+// hasPriorSignal keeps GMGN rank repeats from creating the same discovery alert on every scan.
+func (s *Scanner) hasPriorSignal(chain string, address string, signalType string) bool {
+	if s.db == nil {
+		return false
+	}
+	var count int64
+	err := s.db.Model(&model.SignalEvent{}).
+		Where("source = ? AND chain = ? AND address = ? AND signal_type = ?", "s5", strings.ToLower(chain), scanners.NormalizeAddress(address), signalType).
+		Limit(1).
+		Count(&count).Error
+	return err == nil && count > 0
 }
 
 // marketTrendingCLI 调用 gmgn-cli 获取榜单数据，优先复用本项目已有 GMGN 能力。

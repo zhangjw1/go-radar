@@ -13,7 +13,7 @@ import (
 
 func TestDecidePushMatchesCriticalPolicies(t *testing.T) {
 	resonance := &model.SignalEvent{Source: "system", SignalType: "resonance", Priority: "high"}
-	if decision := decidePush(resonance, false); decision.channel != "immediate" || !decision.cooldownExempt {
+	if decision := decidePush(resonance, false); decision.channel != "immediate" || decision.cooldownExempt {
 		t.Fatalf("unexpected resonance decision: %#v", decision)
 	}
 
@@ -25,6 +25,20 @@ func TestDecidePushMatchesCriticalPolicies(t *testing.T) {
 	s3Medium := &model.SignalEvent{Source: "s3", SignalType: "heat", Priority: "medium"}
 	if decision := decidePush(s3Medium, false); decision.channel != "digest" {
 		t.Fatalf("unexpected s3 decision: %#v", decision)
+	}
+}
+
+func TestS5MediumMomentumQuotaUsesSetting(t *testing.T) {
+	db := openSchedulerTestDB(t)
+	s := New(db, true)
+
+	if got := s.immediateQuotaLimit("s5_momentum_medium"); got != 1 {
+		t.Fatalf("expected default quota 1, got %d", got)
+	}
+
+	db.Create(&model.AppSetting{Key: "s5_momentum_medium_quota", ValueJSON: "2"})
+	if got := s.immediateQuotaLimit("s5_momentum_medium"); got != 2 {
+		t.Fatalf("expected configured quota 2, got %d", got)
 	}
 }
 

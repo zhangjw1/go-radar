@@ -103,7 +103,7 @@ func (s *Scheduler) pushSignals(ctx context.Context, baseSignals []*model.Signal
 			continue
 		}
 		if decision.quotaKey != "" {
-			limit := immediateQuotaLimit(decision.quotaKey)
+			limit := s.immediateQuotaLimit(decision.quotaKey)
 			if limit > 0 && quotaCounts[decision.quotaKey] >= limit {
 				continue
 			}
@@ -329,7 +329,7 @@ func (s *Scheduler) settingsMap() map[string]any {
 func decidePush(signal *model.SignalEvent, isWatchlisted bool) pushDecision {
 	raw := parseRaw(signal.RawJSON)
 	if signal.Source == "system" && signal.SignalType == "resonance" {
-		return pushDecision{channel: "immediate", cooldownExempt: true}
+		return pushDecision{channel: "immediate"}
 	}
 	if signal.Source == "s7" {
 		if signal.Priority == "high" {
@@ -385,9 +385,9 @@ func decidePush(signal *model.SignalEvent, isWatchlisted bool) pushDecision {
 }
 
 // immediateQuotaLimit 返回立即推送通道的单轮限额。
-func immediateQuotaLimit(key string) int {
+func (s *Scheduler) immediateQuotaLimit(key string) int {
 	if key == "s5_momentum_medium" {
-		return 3
+		return settingInt(s.db, "s5_momentum_medium_quota", "S5_MOMENTUM_MEDIUM_QUOTA", 1)
 	}
 	return 0
 }

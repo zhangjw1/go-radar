@@ -1,6 +1,13 @@
 package s5
 
-import "testing"
+import (
+	"testing"
+
+	"go-radar/internal/model"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
 
 func TestEvaluateMomentumRequiresEnoughHistory(t *testing.T) {
 	result := EvaluateMomentum(nil, MomentumRow{MC: 100, Volume: 10, Price: 1, Buys1H: 1}, 3, 5)
@@ -46,5 +53,37 @@ func TestClassifyNarrativeFindsBinanceOnBSC(t *testing.T) {
 	category, matched := ClassifyNarrative("CZ Pancake", "BNB", "bsc")
 	if category != "binance_cz" || len(matched) == 0 {
 		t.Fatalf("unexpected narrative: %s %#v", category, matched)
+	}
+}
+
+func TestHasPriorSignalDetectsExistingS5Discovery(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SignalEvent{}); err != nil {
+		t.Fatalf("migrate schema: %v", err)
+	}
+	scanner := NewScanner(db)
+
+	if scanner.hasPriorSignal("bsc", "0xabc", "narrative_tagged") {
+		t.Fatalf("did not expect prior signal before insert")
+	}
+	db.Create(&model.SignalEvent{
+		Source:     "s5",
+		Chain:      "bsc",
+		Address:    "0xabc",
+		Symbol:     "ABC",
+		SignalType: "narrative_tagged",
+		Priority:   "medium",
+		DedupeKey:  "existing",
+		CreatedAt:  "2026-05-11T00:00:00Z",
+	})
+
+	if !scanner.hasPriorSignal("BSC", "0xABC", "narrative_tagged") {
+		t.Fatalf("expected prior signal to be detected")
+	}
+	if scanner.hasPriorSignal("bsc", "0xabc", "flap_support") {
+		t.Fatalf("did not expect different signal type to match")
 	}
 }

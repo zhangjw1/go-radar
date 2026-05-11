@@ -77,16 +77,16 @@ type FilterOptions struct {
 
 // DashboardData 是监控总览页的数据模型。
 type DashboardData struct {
-	Page                 PageData             // Page 是页面公共数据。
-	HighSignals          []model.SignalEvent  // HighSignals 是最近高优先级信号。
-	ResonanceSignals     []model.SignalEvent  // ResonanceSignals 是最近跨来源共振信号。
-	LatestPushes         []model.SignalEvent  // LatestPushes 是最近已推送信号。
-	RecentRuns           []model.ScannerRun   // RecentRuns 是最近扫描任务运行记录。
-	JobErrors            []model.ScannerRun   // JobErrors 是最近失败任务。
-	JobWarnings          []JobWarning         // JobWarnings 是任务 metadata 中的非致命告警。
-	SourceCounts         map[string]int64     // SourceCounts 是各来源最近信号数量。
-	WatchlistHitCount    int64                // WatchlistHitCount 是观察名单命中的信号数量。
-	ActiveWatchlistCount int64                // ActiveWatchlistCount 是 active 状态观察名单数量。
+	Page                 PageData            // Page 是页面公共数据。
+	HighSignals          []model.SignalEvent // HighSignals 是最近高优先级信号。
+	ResonanceSignals     []model.SignalEvent // ResonanceSignals 是最近跨来源共振信号。
+	LatestPushes         []model.SignalEvent // LatestPushes 是最近已推送信号。
+	RecentRuns           []model.ScannerRun  // RecentRuns 是最近扫描任务运行记录。
+	JobErrors            []model.ScannerRun  // JobErrors 是最近失败任务。
+	JobWarnings          []JobWarning        // JobWarnings 是任务 metadata 中的非致命告警。
+	SourceCounts         map[string]int64    // SourceCounts 是各来源最近信号数量。
+	WatchlistHitCount    int64               // WatchlistHitCount 是观察名单命中的信号数量。
+	ActiveWatchlistCount int64               // ActiveWatchlistCount 是 active 状态观察名单数量。
 }
 
 // SignalsData 是信号列表页的数据模型。
@@ -251,13 +251,13 @@ func (s *Server) health(c *gin.Context) {
 	sqlDB, err := s.db.DB()
 	dbOK := err == nil && sqlDB.Ping() == nil
 	response := gin.H{
-		"status":        "ok",
-		"service":       "go-radar",
-		"app_name":      s.settings.AppName,
-		"time":          time.Now().UTC().Format(time.RFC3339),
-		"database_ok":   dbOK,
-		"database_path": s.settings.DatabasePath,
-		"scheduler_ok":  s.scheduler == nil || !s.scheduler.Enabled() || dbOK,
+		"status":            "ok",
+		"service":           "go-radar",
+		"app_name":          s.settings.AppName,
+		"time":              time.Now().UTC().Format(time.RFC3339),
+		"database_ok":       dbOK,
+		"database_path":     s.settings.DatabasePath,
+		"scheduler_ok":      s.scheduler == nil || !s.scheduler.Enabled() || dbOK,
 		"scheduler_enabled": s.scheduler != nil && s.scheduler.Enabled(),
 	}
 	if s.scheduler != nil {
@@ -1029,11 +1029,11 @@ func sidebarGroups() []SidebarGroup {
 
 func radarMeta(source string) (RadarMeta, bool) {
 	meta := map[string]RadarMeta{
-		"s1": {Label: "S1 币安公告", Summary: "监控 Binance 公告、Alpha、空投和上所预期，偏事件驱动。", Focus: "公告催化 / 事件预期"},
-		"s2": {Label: "S2 费率翻转", Summary: "监控费率由正转负且 OI 持续上升的合约环境，偏逼空观察。", Focus: "费率翻转 / OI 增长"},
-		"s3": {Label: "S3 热度确认", Summary: "监控热度、负费率、持仓量变化，偏合约市场资金确认。", Focus: "热度 / 费率 / OI"},
-		"s5": {Label: "S5 链上发现", Summary: "监控链上新币、叙事币、FLAP 支撑和连续动量，偏早期发现。", Focus: "链上新币 / 叙事 / FLAP"},
-		"s7": {Label: "S7 Vitalik Sell", Summary: "监控 Vitalik 地址 ERC-20 转出，识别 DEX、CEX 或 LP 路径。", Focus: "DEX / CEX / LP 转出"},
+		"s1":     {Label: "S1 币安公告", Summary: "监控 Binance 公告、Alpha、空投和上所预期，偏事件驱动。", Focus: "公告催化 / 事件预期"},
+		"s2":     {Label: "S2 费率翻转", Summary: "监控费率由正转负且 OI 持续上升的合约环境，偏逼空观察。", Focus: "费率翻转 / OI 增长"},
+		"s3":     {Label: "S3 热度确认", Summary: "监控热度、负费率、持仓量变化，偏合约市场资金确认。", Focus: "热度 / 费率 / OI"},
+		"s5":     {Label: "S5 链上发现", Summary: "监控链上新币、叙事币、FLAP 支撑和连续动量，偏早期发现。", Focus: "链上新币 / 叙事 / FLAP"},
+		"s7":     {Label: "S7 Vitalik Sell", Summary: "监控 Vitalik 地址 ERC-20 转出，识别 DEX、CEX 或 LP 路径。", Focus: "DEX / CEX / LP 转出"},
 		"system": {Label: "系统共振", Summary: "多个雷达来源同时命中同一标的时生成的增强信号。", Focus: "跨源共振"},
 	}
 	value, ok := meta[source]
@@ -1264,6 +1264,8 @@ func defaultSettingValue(key string) any {
 		return envInt("S7_MIN_NOTIFY_USD", 0)
 	case "s5_momentum_consecutive_up":
 		return envInt("S5_MOMENTUM_CONSECUTIVE_UP", 3)
+	case "s5_momentum_medium_quota":
+		return envInt("S5_MOMENTUM_MEDIUM_QUOTA", 1)
 	case "s3_top_volume_limit":
 		return envInt("S3_TOP_VOLUME_LIMIT", 100)
 	case "s3_volume_lookback_limit":
@@ -1487,6 +1489,7 @@ var visibleSettingKeys = []string{
 	"gmgn_retries",
 	"s7_min_notify_usd",
 	"s5_momentum_consecutive_up",
+	"s5_momentum_medium_quota",
 	"s5_min_gain_pct",
 	"s3_vol_surge_mult",
 	"s3_min_vol_usd",
