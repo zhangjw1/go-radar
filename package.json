@@ -1,0 +1,8 @@
+{
+  "name": "go-radar",
+  "private": true,
+  "description": "Standalone Go Radar helper dependencies",
+  "dependencies": {
+    "gmgn-cli": "1.2.8"
+  }
+}

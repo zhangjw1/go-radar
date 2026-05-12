@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,16 +141,33 @@ func (s *Scheduler) runPlaceholder(spec Spec) {
 // runScanner 执行一次扫描、入库快照和信号，并处理共振信号与 Telegram 推送。
 func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners.Result, error)) {
 	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	startTime := time.Now()
+	snapshotCount := 0
+	signalCount := 0
+	pushedCount := 0
+	resonanceCount := 0
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	log.Printf("scanner %s started", name)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			stack := string(debug.Stack())
+			errorText := fmt.Sprintf("panic: %v", recovered)
+			s.recordRunWithStart(name, startedAt, "error", map[string]any{
+				"panic": fmt.Sprint(recovered),
+				"stack": stack,
+			}, errorText, signalCount, snapshotCount)
+			log.Printf("scanner %s panic: %v\n%s", name, recovered, stack)
+		}
+	}()
 
 	result, err := scan(ctx)
 	if err != nil {
 		s.recordRunWithStart(name, startedAt, "error", map[string]any{}, err.Error(), 0, 0)
+		log.Printf("scanner %s ended status=error signals=0 snapshots=0 pushed=0 warnings=0 duration=%s", name, time.Since(startTime).Round(time.Millisecond))
 		return
 	}
 
-	snapshotCount := 0
 	for _, snapshot := range result.Snapshots {
 		if err := scanners.StoreSnapshot(s.db, snapshot); err != nil {
 			s.recordRunWithStart(name, startedAt, "error", map[string]any{"warnings": result.Warnings}, fmt.Sprintf("store snapshot: %v", err), len(result.Signals), snapshotCount)
@@ -158,7 +176,6 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 		snapshotCount++
 	}
 	newSignals := []*model.SignalEvent{}
-	signalCount := 0
 	for _, signal := range result.Signals {
 		stored, created, err := scanners.StoreSignalEvent(s.db, signal, settingInt(s.db, "signal_time_bucket_minutes", "SIGNAL_TIME_BUCKET_MINUTES", 30))
 		if err != nil {
@@ -175,6 +192,7 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 		s.recordRunWithStart(name, startedAt, "error", map[string]any{"warnings": result.Warnings}, fmt.Sprintf("resonance: %v", err), signalCount, snapshotCount)
 		return
 	}
+	resonanceCount = len(resonanceSignals)
 	signalCount += len(resonanceSignals)
 
 	pushedIDs, err := s.pushSignals(ctx, newSignals, resonanceSignals, name)
@@ -182,6 +200,7 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 		s.recordRunWithStart(name, startedAt, "error", map[string]any{"warnings": result.Warnings}, fmt.Sprintf("push signals: %v", err), signalCount, snapshotCount)
 		return
 	}
+	pushedCount = len(pushedIDs)
 	if err := s.markSignalsPushed(pushedIDs); err != nil {
 		s.recordRunWithStart(name, startedAt, "error", map[string]any{"warnings": result.Warnings}, fmt.Sprintf("mark pushed: %v", err), signalCount, snapshotCount)
 		return
@@ -191,9 +210,14 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 		metadata = map[string]any{}
 	}
 	metadata["warnings"] = result.Warnings
-	metadata["pushed_count"] = len(pushedIDs)
-	metadata["resonance_count"] = len(resonanceSignals)
-	s.recordRunWithStart(name, startedAt, "ok", metadata, "", signalCount, snapshotCount)
+	metadata["pushed_count"] = pushedCount
+	metadata["resonance_count"] = resonanceCount
+	status := "ok"
+	if len(result.Warnings) > 0 {
+		status = "warning"
+	}
+	s.recordRunWithStart(name, startedAt, status, metadata, "", signalCount, snapshotCount)
+	log.Printf("scanner %s ended status=%s signals=%d snapshots=%d pushed=%d resonance=%d warnings=%d duration=%s", name, status, signalCount, snapshotCount, pushedCount, resonanceCount, len(result.Warnings), time.Since(startTime).Round(time.Millisecond))
 }
 
 // envBool 从环境变量解析布尔配置。
@@ -241,6 +265,56 @@ func (s *Scheduler) recordRunWithStart(scanner string, startedAt string, status 
 	if err := s.db.Create(&run).Error; err != nil {
 		log.Printf("record scanner run for %s failed: %v", scanner, err)
 	}
+	if strings.TrimSpace(errorText) != "" {
+		log.Printf("scanner %s finished with %s: %s", scanner, status, errorText)
+	}
+	if warnings := warningsFromMetadata(metadata); len(warnings) > 0 {
+		log.Printf("scanner %s warnings (%d): %s", scanner, len(warnings), strings.Join(firstN(warnings, 5), " | "))
+	}
+}
+
+func warningsFromMetadata(metadata map[string]any) []string {
+	if metadata == nil {
+		return nil
+	}
+	raw, ok := metadata["warnings"]
+	if !ok {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []string:
+		return compactStrings(values)
+	case []any:
+		items := make([]string, 0, len(values))
+		for _, item := range values {
+			items = append(items, fmt.Sprint(item))
+		}
+		return compactStrings(items)
+	default:
+		text := strings.TrimSpace(fmt.Sprint(values))
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	}
+}
+
+func compactStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func firstN(values []string, n int) []string {
+	if len(values) <= n {
+		return values
+	}
+	return values[:n]
 }
 
 // runtimeBool 优先读取 settings 表中的布尔配置，缺失时使用 fallback。

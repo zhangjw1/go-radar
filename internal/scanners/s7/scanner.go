@@ -28,6 +28,7 @@ type Scanner struct {
 	db         *gorm.DB             // db 用于读取上一轮成功扫描到的区块位置。
 	client     *http.Client         // client 是带代理和超时配置的 HTTP 客户端。
 	tokenCache map[string]tokenInfo // tokenCache 缓存 ERC20 symbol/name/decimals，避免同轮扫描重复 eth_call。
+	txCache    map[string]string    // txCache 缓存交易发送方，避免同一交易内多条日志重复 eth_getTransactionByHash。
 }
 
 // tokenInfo 是链上 ERC20 元数据的本地缓存对象。
@@ -52,10 +53,15 @@ type ethLog struct {
 	LogIndex        string   `json:"logIndex"`        // LogIndex 是同一交易内的日志序号。
 }
 
+// ethTransaction 是 eth_getTransactionByHash 返回的最小交易结构。
+type ethTransaction struct {
+	From string `json:"from"` // From 是实际签名并发送交易的账户地址。
+}
+
 // rpcResponse 是以太坊 JSON-RPC 的通用响应包装。
 type rpcResponse struct {
 	Result json.RawMessage `json:"result"` // Result 是不同 RPC 方法返回的原始 JSON 结果。
-	Error  *struct { // Error 是 RPC 层错误，非空时本次调用失败。
+	Error  *struct {       // Error 是 RPC 层错误，非空时本次调用失败。
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -66,7 +72,7 @@ type rpcResponse struct {
 // 业务上只需要价格和流动性，用流动性最高的交易对估算转账美元价值。
 type dexScreenerResponse struct {
 	Pairs []struct { // Pairs 是 DexScreener 返回的交易对列表。
-		PriceUSD  string `json:"priceUsd"` // PriceUSD 是该交易对上的美元价格字符串。
+		PriceUSD  string   `json:"priceUsd"` // PriceUSD 是该交易对上的美元价格字符串。
 		Liquidity struct { // Liquidity 用于选择最可靠的交易对。
 			USD float64 `json:"usd"`
 		} `json:"liquidity"`
@@ -79,6 +85,7 @@ func NewScanner(db *gorm.DB) *Scanner {
 		db:         db,
 		client:     scanners.NewHTTPClient(),
 		tokenCache: map[string]tokenInfo{},
+		txCache:    map[string]string{},
 	}
 }
 
@@ -140,6 +147,14 @@ func (s *Scanner) buildSignal(ctx context.Context, logItem ethLog, minUSD float6
 		return nil, true, "log_missing_topics"
 	}
 	tokenAddress := strings.ToLower(logItem.Address)
+	txFrom, txWarning := s.transactionFrom(ctx, logItem.TransactionHash)
+	if txWarning != "" {
+		return nil, true, txWarning
+	}
+	if !strings.EqualFold(txFrom, VitalikAddress) {
+		return nil, true, "tx_sender_not_vitalik"
+	}
+
 	recipient := TopicToAddress(logItem.Topics[2])
 	if recipient == "" {
 		return nil, true, "log_missing_recipient"
@@ -172,7 +187,7 @@ func (s *Scanner) buildSignal(ctx context.Context, logItem ethLog, minUSD float6
 		tags = append(tags, SlugTag(recipientName))
 	}
 	socialLinksJSON, _ := json.Marshal(map[string]string{
-		"etherscan":    fmt.Sprintf("https://etherscan.io/token/%s", tokenAddress),
+		"etherscan":   fmt.Sprintf("https://etherscan.io/token/%s", tokenAddress),
 		"dexscreener": fmt.Sprintf("https://dexscreener.com/ethereum/%s", tokenAddress),
 	})
 	raw := map[string]any{
@@ -216,6 +231,27 @@ func (s *Scanner) buildSignal(ctx context.Context, logItem ethLog, minUSD float6
 		},
 	}
 	return &signal, false, warning
+}
+
+// transactionFrom 读取交易发送方，用于过滤伪造 Transfer(from=Vitalik) 的垃圾币事件。
+func (s *Scanner) transactionFrom(ctx context.Context, txHash string) (string, string) {
+	if strings.TrimSpace(txHash) == "" {
+		return "", "missing_tx_hash"
+	}
+	txHash = strings.ToLower(txHash)
+	if from, ok := s.txCache[txHash]; ok {
+		return from, ""
+	}
+	var tx ethTransaction
+	if err := s.rpcCall(ctx, "eth_getTransactionByHash", []any{txHash}, &tx); err != nil {
+		return "", fmt.Sprintf("tx_lookup_failed:%s:%v", txHash, err)
+	}
+	if strings.TrimSpace(tx.From) == "" {
+		return "", "tx_lookup_empty_from"
+	}
+	from := strings.ToLower(tx.From)
+	s.txCache[txHash] = from
+	return from, ""
 }
 
 // latestBlock 读取当前以太坊最新区块号。

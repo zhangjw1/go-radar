@@ -87,3 +87,10 @@ func TestHasPriorSignalDetectsExistingS5Discovery(t *testing.T) {
 		t.Fatalf("did not expect different signal type to match")
 	}
 }
+
+func TestDecodeCommandOutputHandlesGBKChinese(t *testing.T) {
+	decoded := decodeCommandOutput([]byte{0xb2, 0xbb, 0xca, 0xc7, 0xc4, 0xda, 0xb2, 0xbf})
+	if decoded != "不是内部" {
+		t.Fatalf("unexpected decoded output: %q", decoded)
+	}
+}

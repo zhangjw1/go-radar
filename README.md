@@ -13,6 +13,16 @@ From this directory:
 ```powershell
 Copy-Item .env.example .env
 $env:GOTELEMETRY = "off"
+npm install
+go run ./cmd/radar
+```
+
+`S5` uses `gmgn-cli`. For this standalone project, install it locally into this
+directory so the service does not depend on any other repository:
+
+```powershell
+npm install
+$env:GOTELEMETRY = "off"
 go run ./cmd/radar
 ```
 
@@ -41,7 +51,7 @@ go run ./cmd/radar
 - `GO_RADAR_AUTO_MIGRATE=true` creates the SQLite tables automatically.
 - `TG_BOT_TOKEN` and `TG_CHAT_ID` are optional. If empty, Telegram sending is disabled.
 - `GMGN_API_KEY` is optional for public fallback calls, but recommended for `gmgn-cli` and authenticated GMGN access. Direct GMGN HTTP fallback sends it as the `X-APIKEY` header when configured.
-- `gmgn-cli` is optional. If it is not installed under local `node_modules/.bin` or on `PATH`, S5 falls back to direct HTTP providers where possible.
+- `gmgn-cli` is optional, but recommended. For a fully standalone setup, run `npm install` in this directory so `node_modules/.bin/gmgn-cli` is available locally.
 
 ## Endpoints
 

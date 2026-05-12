@@ -28,6 +28,23 @@
     {{else}}
       <p class="muted">这个标的暂未加入观察名单。</p>
     {{end}}
+    <form class="filters" method="post" action="/watchlist" style="margin-top:12px;">
+      <input type="hidden" name="chain" value="{{.Token.Chain}}">
+      <input type="hidden" name="address" value="{{.Token.Address}}">
+      <input type="hidden" name="symbol" value="{{.Token.Symbol}}">
+      <input type="hidden" name="name" value="{{if .Token.Name}}{{.Token.Name}}{{else}}{{.Token.Symbol}}{{end}}">
+      <label>状态<br>
+        <select name="status">
+          <option value="watch" {{if or (not .WatchItem) (eq .WatchItem.Status "watch")}}selected{{end}}>watch</option>
+          <option value="active" {{if and .WatchItem (eq .WatchItem.Status "active")}}selected{{end}}>active</option>
+          <option value="paused" {{if and .WatchItem (eq .WatchItem.Status "paused")}}selected{{end}}>paused</option>
+        </select>
+      </label>
+      <label style="flex:1; min-width: 220px;">备注<br>
+        <input name="note" value="{{if .WatchItem}}{{.WatchItem.Note}}{{end}}" placeholder="加入原因 / 观察说明">
+      </label>
+      <button type="submit">{{if .WatchItem}}更新观察名单{{else}}加入观察名单{{end}}</button>
+    </form>
   </div>
 </div>
 

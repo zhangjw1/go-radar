@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"go-radar/internal/config"
 	"go-radar/internal/model"
@@ -81,6 +83,24 @@ func TestWatchlistAPIUpsertsItem(t *testing.T) {
 	}
 }
 
+func TestWatchlistPageRendersAddForm(t *testing.T) {
+	router := testRouter(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/watchlist", nil)
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{`加入观察名单`, `method="post" action="/watchlist"`, `name="address"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("watchlist page missing %q", want)
+		}
+	}
+}
+
 func TestSettingsAPIStoresOverride(t *testing.T) {
 	router := testRouter(t)
 	recorder := httptest.NewRecorder()
@@ -135,6 +155,7 @@ func testRouter(t *testing.T) *gin.Engine {
 	if err := db.Create(&token).Error; err != nil {
 		t.Fatalf("seed token: %v", err)
 	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := db.Create(&model.SignalEvent{
 		TokenID:    &token.ID,
 		Source:     "s5",
@@ -146,13 +167,13 @@ func testRouter(t *testing.T) *gin.Engine {
 		Score:      42,
 		Reason:     "test",
 		DedupeKey:  "s5|eth|0xabc|momentum|bucket",
-		CreatedAt:  "2026-05-11 10:00:00",
+		CreatedAt:  now,
 	}).Error; err != nil {
 		t.Fatalf("seed signal: %v", err)
 	}
 	if err := db.Create(&model.ScannerRun{
 		Scanner:       "s5",
-		StartedAt:     "2026-05-11 10:00:00",
+		StartedAt:     now,
 		Status:        "ok",
 		SignalCount:   1,
 		SnapshotCount: 1,

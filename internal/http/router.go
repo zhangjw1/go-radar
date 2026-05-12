@@ -211,6 +211,8 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 			"priorityClass":   priorityClass,
 			"priorityLabel":   priorityLabel,
 			"statusLabel":     statusLabel,
+			"warningCount":    warningCount,
+			"firstWarning":    firstWarning,
 			"formatScore":     formatScore,
 			"formatTime":      formatTime,
 			"sumCounts":       sumCounts,
@@ -800,29 +802,63 @@ func (s *Server) recentJobWarnings(limit int) []JobWarning {
 	}
 	warnings := []JobWarning{}
 	for _, run := range runs {
-		var metadata map[string]any
-		if json.Unmarshal([]byte(run.MetadataJSON), &metadata) != nil {
-			continue
-		}
-		rawWarnings, ok := metadata["warnings"].([]any)
-		if !ok || len(rawWarnings) == 0 {
-			continue
-		}
 		row := JobWarning{Scanner: run.Scanner, StartedAt: run.StartedAt}
-		for _, item := range rawWarnings {
-			text := strings.TrimSpace(toString(item))
-			if text != "" {
-				row.Warnings = append(row.Warnings, text)
-			}
-			if len(row.Warnings) >= 3 {
-				break
-			}
-		}
+		row.Warnings = firstNStrings(runWarnings(run), 3)
 		if len(row.Warnings) > 0 {
 			warnings = append(warnings, row)
 		}
 	}
 	return warnings
+}
+
+func runWarnings(value any) []string {
+	var raw string
+	switch run := value.(type) {
+	case model.ScannerRun:
+		raw = run.MetadataJSON
+	case *model.ScannerRun:
+		if run == nil {
+			return nil
+		}
+		raw = run.MetadataJSON
+	default:
+		return nil
+	}
+	var metadata map[string]any
+	if json.Unmarshal([]byte(raw), &metadata) != nil {
+		return nil
+	}
+	rawWarnings, ok := metadata["warnings"].([]any)
+	if !ok {
+		return nil
+	}
+	warnings := make([]string, 0, len(rawWarnings))
+	for _, item := range rawWarnings {
+		text := strings.TrimSpace(toString(item))
+		if text != "" {
+			warnings = append(warnings, text)
+		}
+	}
+	return warnings
+}
+
+func warningCount(value any) int {
+	return len(runWarnings(value))
+}
+
+func firstWarning(value any) string {
+	warnings := runWarnings(value)
+	if len(warnings) == 0 {
+		return ""
+	}
+	return warnings[0]
+}
+
+func firstNStrings(values []string, n int) []string {
+	if len(values) <= n {
+		return values
+	}
+	return values[:n]
 }
 
 func (s *Server) filterOptions() FilterOptions {
@@ -1160,9 +1196,13 @@ func priorityLabel(priority string) string {
 func statusLabel(status string) string {
 	labels := map[string]string{
 		"ok":      "正常",
+		"warning": "告警",
 		"error":   "错误",
 		"skipped": "跳过",
 		"running": "运行中",
+		"watch":   "观察",
+		"active":  "活跃",
+		"paused":  "暂停",
 	}
 	if label, ok := labels[status]; ok {
 		return label

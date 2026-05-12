@@ -16,6 +16,8 @@ import (
 	"go-radar/internal/model"
 	"go-radar/internal/scanners"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 	"gorm.io/gorm"
 )
 
@@ -259,7 +261,9 @@ func (s *Scanner) fetchNewTokens(ctx context.Context) ([]tokenData, []string) {
 	for _, spec := range specs {
 		items, err := s.marketTrendingCLI(ctx, spec.chain, spec.interval, spec.orderBy, "desc", spec.limit, nil)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("gmgn_cli_trending_failed:%s:%s:%v", spec.chain, spec.orderBy, err))
+			if !isGMGNCLIMissing(err) {
+				warnings = append(warnings, fmt.Sprintf("gmgn_cli_trending_failed:%s:%s:%v", spec.chain, spec.orderBy, err))
+			}
 			continue
 		}
 		for _, item := range items {
@@ -304,7 +308,9 @@ func (s *Scanner) fetchFlapTokens(ctx context.Context) ([]tokenData, []string) {
 	warnings := []string{}
 	items, err := s.marketTrendingCLI(ctx, "bsc", "24h", "volume", "desc", 30, []string{"flap"})
 	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("gmgn_cli_flap_failed:%v", err))
+		if !isGMGNCLIMissing(err) {
+			warnings = append(warnings, fmt.Sprintf("gmgn_cli_flap_failed:%v", err))
+		}
 		items, err = s.gmgnRankHTTP(ctx, "https://gmgn.ai/defi/quotation/v1/rank/bsc/swaps/24h?launchpad=flap&orderby=volume&direction=desc&limit=30")
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("gmgn_flap_failed:%v", err))
@@ -388,6 +394,9 @@ func (s *Scanner) hasPriorSignal(chain string, address string, signalType string
 // marketTrendingCLI 调用 gmgn-cli 获取榜单数据，优先复用本项目已有 GMGN 能力。
 func (s *Scanner) marketTrendingCLI(ctx context.Context, chain string, interval string, orderBy string, direction string, limit int, platforms []string) ([]map[string]any, error) {
 	cliPath := resolveGMGNCLIPath()
+	if strings.TrimSpace(cliPath) == "" {
+		return nil, errGMGNCLINotFound
+	}
 	args := []string{"market", "trending", "--chain", chain, "--interval", interval, "--order-by", orderBy, "--direction", direction, "--limit", fmt.Sprintf("%d", limit), "--raw"}
 	for _, platform := range platforms {
 		args = append(args, "--platform", platform)
@@ -403,7 +412,7 @@ func (s *Scanner) marketTrendingCLI(ctx context.Context, chain string, interval 
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+			return nil, fmt.Errorf("%v: %s", err, decodeCommandOutput(exitErr.Stderr))
 		}
 		return nil, err
 	}
@@ -601,16 +610,49 @@ func resolveGMGNCLIPath() string {
 	if runtime.GOOS == "windows" {
 		name = "gmgn-cli.cmd"
 	}
-	candidates := []string{
-		filepath.Join("node_modules", ".bin", name),
-		name,
+	if local := findLocalGMGNCLI(name); local != "" {
+		return local
 	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
+	if resolved, err := exec.LookPath(name); err == nil {
+		return resolved
+	}
+	return ""
+}
+
+var errGMGNCLINotFound = fmt.Errorf("gmgn-cli not found")
+
+func isGMGNCLIMissing(err error) bool {
+	return err == errGMGNCLINotFound
+}
+
+func decodeCommandOutput(output []byte) string {
+	text := strings.TrimSpace(string(output))
+	if text == "" || !strings.ContainsRune(text, '\uFFFD') {
+		return text
+	}
+	decoded, _, err := transform.String(simplifiedchinese.GB18030.NewDecoder(), string(output))
+	if err != nil {
+		return text
+	}
+	return strings.TrimSpace(decoded)
+}
+
+func findLocalGMGNCLI(name string) string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, "node_modules", ".bin", name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
 	}
-	return name
 }
 
 // proxyEnv 为 gmgn-cli 构造代理环境变量，保持和 Go HTTP 客户端一致。

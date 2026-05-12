@@ -1,9 +1,12 @@
 package scheduler
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"go-radar/internal/model"
+	"go-radar/internal/scanners"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -62,5 +65,31 @@ func TestRunPlaceholderRecordsSkippedRun(t *testing.T) {
 	}
 	if run.Scanner != "sx" || run.Status != "skipped" || run.Error == "" {
 		t.Fatalf("unexpected scanner run: %#v", run)
+	}
+}
+
+func TestRunScannerRecordsPanicWithStack(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.ScannerRun{}, &model.AppSetting{}); err != nil {
+		t.Fatalf("migrate schema: %v", err)
+	}
+
+	scheduler := New(db, true)
+	scheduler.runScanner("sx", func(context.Context) (scanners.Result, error) {
+		panic("kaboom")
+	})
+
+	var run model.ScannerRun
+	if err := db.First(&run).Error; err != nil {
+		t.Fatalf("read scanner run: %v", err)
+	}
+	if run.Scanner != "sx" || run.Status != "error" || !strings.Contains(run.Error, "panic: kaboom") {
+		t.Fatalf("unexpected panic run: %#v", run)
+	}
+	if !strings.Contains(run.MetadataJSON, `"stack"`) || !strings.Contains(run.MetadataJSON, "kaboom") {
+		t.Fatalf("expected panic stack metadata, got %s", run.MetadataJSON)
 	}
 }

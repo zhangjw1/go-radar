@@ -3,8 +3,46 @@
 <div class="page-head">
   <div>
     <h1 class="page-title">观察名单</h1>
-    <div class="page-subtitle">这里放你想重点跟踪的标的。命中观察名单的信号会有更短冷却和更高复查优先级。</div>
+    <div class="page-subtitle">把想盯的 token 放进来，后续信号会优先命中这里。</div>
   </div>
+</div>
+
+<div class="card">
+  <div class="section-title">
+    <h2>加入观察名单</h2>
+    <span class="soft-pill">手动添加</span>
+  </div>
+  <form class="filters" method="post" action="/watchlist" style="margin-bottom:16px;">
+    <label>链<br>
+      <select name="chain">
+        <option value="eth">Ethereum</option>
+        <option value="bsc">BSC</option>
+        <option value="base">Base</option>
+        <option value="solana">Solana</option>
+        <option value="ton">TON</option>
+      </select>
+    </label>
+    <label>地址 / token<br>
+      <input name="address" required placeholder="0x... / token address">
+    </label>
+    <label>符号<br>
+      <input name="symbol" placeholder="AAA">
+    </label>
+    <label>名称<br>
+      <input name="name" placeholder="AAA Token">
+    </label>
+    <label>状态<br>
+      <select name="status">
+        <option value="watch">watch</option>
+        <option value="active">active</option>
+        <option value="paused">paused</option>
+      </select>
+    </label>
+    <label style="flex:1; min-width: 240px;">备注<br>
+      <input name="note" placeholder="加入原因 / 观察说明">
+    </label>
+    <button type="submit">加入 / 更新</button>
+  </form>
 </div>
 
 <div class="card">

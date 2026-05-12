@@ -53,12 +53,19 @@
   <div class="card">
     <div class="section-title"><h2>最近任务</h2><span class="soft-pill">运行状态</span></div>
     <table>
-      <thead><tr><th>开始时间</th><th>状态</th><th>信号</th><th>快照</th><th>错误</th></tr></thead>
+      <thead><tr><th>开始时间</th><th>状态</th><th>信号</th><th>快照</th><th>警告</th><th>错误</th></tr></thead>
       <tbody>
       {{range .Runs}}
-      <tr><td>{{formatTime .StartedAt}}</td><td>{{statusLabel .Status}}</td><td>{{.SignalCount}}</td><td>{{.SnapshotCount}}</td><td>{{if .Error}}{{.Error}}{{else}}-{{end}}</td></tr>
+      <tr>
+        <td>{{formatTime .StartedAt}}</td>
+        <td>{{statusLabel .Status}}</td>
+        <td>{{.SignalCount}}</td>
+        <td>{{.SnapshotCount}}</td>
+        <td>{{if gt (warningCount .) 0}}<span class="priority-medium">{{warningCount .}} 条</span><span class="table-note">{{firstWarning .}}</span>{{else}}-{{end}}</td>
+        <td>{{if .Error}}{{.Error}}{{else}}-{{end}}</td>
+      </tr>
       {{else}}
-      <tr><td colspan="5" class="muted">暂无运行记录。</td></tr>
+      <tr><td colspan="6" class="muted">暂无运行记录。</td></tr>
       {{end}}
       </tbody>
     </table>

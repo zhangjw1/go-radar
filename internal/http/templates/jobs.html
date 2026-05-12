@@ -27,6 +27,7 @@
           {{if .LastRun}}
             {{statusLabel .LastRun.Status}} / {{.LastRun.SignalCount}} 个信号
             <span class="table-note">{{formatTime .LastRun.StartedAt}}</span>
+            {{if gt (warningCount .LastRun) 0}}<span class="table-note">警告 {{warningCount .LastRun}} 条：{{firstWarning .LastRun}}</span>{{end}}
           {{else}}
             -
           {{end}}
