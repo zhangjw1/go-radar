@@ -8,6 +8,7 @@ import (
 	"html"
 	"log"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,89 @@ import (
 
 	"gorm.io/gorm"
 )
+
+var (
+	bjLocation      = time.FixedZone("Asia/Shanghai", 8*60*60)
+	evmAddressRE    = regexp.MustCompile(`^0x[a-fA-F0-9]{40}$`)
+	base58AddressRE = regexp.MustCompile(`^[1-9A-HJ-NP-Za-km-z]{32,44}$`)
+)
+
+var s3TypeLabels = map[string]string{
+	"heat":                       "热度信号",
+	"heat_plus_oi":               "热度 + OI",
+	"heat_plus_negative_funding": "热度 + 负费率",
+	"oi_anomaly":                 "OI 异动",
+}
+
+var s3TypeSummaries = map[string]string{
+	"heat":                       "热度开始聚集，值得放进观察名单继续盯。",
+	"heat_plus_oi":               "热度已经起来，未平仓总额同步增加，属于更强确认。",
+	"heat_plus_negative_funding": "热度有了，负费率说明空头拥挤，容易形成逼空逻辑。",
+	"oi_anomaly":                 "未平仓总额变化很大，但未必有热度配合，需要更谨慎判断。",
+}
+
+var s5TypeLabels = map[string]string{
+	"flap_support":     "FLAP 支撑",
+	"narrative_tagged": "叙事命中",
+	"momentum":         "连续动量",
+}
+
+var s5TypeSummaries = map[string]string{
+	"flap_support":     "底部支撑或企稳形态出现，适合先放进观察名单。",
+	"narrative_tagged": "命中了热点叙事标签，值得继续跟踪后续资金动作。",
+	"momentum":         "连续上涨并达到动量阈值，属于链上更强确认。",
+}
+
+var s2TypeLabels = map[string]string{
+	"funding_flip_oi_rising": "费率翻转 + OI",
+}
+
+var s2TypeSummaries = map[string]string{
+	"funding_flip_oi_rising": "费率由正转负，且未平仓合约上升，常用于观察逼空环境。",
+}
+
+var s1TypeLabels = map[string]string{
+	"alpha_discovery": "币安公告发现",
+}
+
+var s1TypeSummaries = map[string]string{
+	"alpha_discovery": "来自 Binance 公告 / Alpha 事件的发现信号，偏事件驱动。",
+}
+
+var s1KindLabels = map[string]string{
+	"listing": "Will List",
+	"airdrop": "HODLer Airdrop",
+	"alpha":   "Binance Alpha",
+	"other":   "公告信号",
+}
+
+var s7TypeLabels = map[string]string{
+	"vitalik_sell": "V神卖币",
+}
+
+var s7TypeSummaries = map[string]string{
+	"vitalik_sell": "监测到 V 神地址向疑似卖出路径转出代币，值得立即关注。",
+}
+
+var sourceLabels = map[string]string{
+	"s7":     "S7 V神卖币",
+	"s1":     "S1 币安公告",
+	"s2":     "S2 费率翻转",
+	"s3":     "S3 热度确认",
+	"s5":     "S5 链上发现",
+	"system": "系统共振",
+}
+
+var chainLabels = map[string]string{
+	"binance_perp":  "Binance 合约",
+	"binance_alpha": "币安公告",
+	"eth":           "Ethereum",
+	"ethereum":      "Ethereum",
+	"bsc":           "BSC",
+	"base":          "Base",
+	"sol":           "Solana",
+	"solana":        "Solana",
+}
 
 // pushDecision 是单条信号经过推送策略后的路由结果。
 type pushDecision struct {
@@ -116,7 +200,8 @@ func (s *Scheduler) pushSignals(ctx context.Context, baseSignals []*model.Signal
 			log.Printf("suppressed repeat push for %s on %s after %s/%s", signal.Symbol, signal.Source, blocking.Source, blocking.SignalType)
 			continue
 		}
-		if err := notifier.SendText(ctx, s.formatSignalMessage(signal)); err != nil {
+		token := s.tokenForSignal(signal)
+		if err := notifier.SendText(ctx, formatSignalMessage(signal, token), copyItemsForSignal(signal, token)...); err != nil {
 			return pushedIDs, err
 		}
 		if decision.quotaKey != "" {
@@ -203,7 +288,7 @@ func (s *Scheduler) maybeSendS3Digest(ctx context.Context, notifier *radartelegr
 	if len(digestSignals) == 0 {
 		return nil, nil
 	}
-	if err := notifier.SendText(ctx, formatS3Digest(digestSignals)); err != nil {
+	if err := notifier.SendText(ctx, formatS3Digest(digestSignals), copyItemsForSignals(digestSignals)...); err != nil {
 		return nil, err
 	}
 	ids := make([]int64, 0, len(digestSignals))
@@ -306,6 +391,18 @@ func (s *Scheduler) telegramNotifier() (*radartelegram.Notifier, error) {
 		ProxyURL: proxyURL,
 		TrustEnv: effectiveBool(overrides, "http_trust_env"),
 	})
+}
+
+// tokenForSignal 读取信号关联的 token 基础资料，用于 Telegram 消息展示。
+func (s *Scheduler) tokenForSignal(signal *model.SignalEvent) *model.TokenProfile {
+	if signal == nil || signal.TokenID == nil {
+		return nil
+	}
+	var token model.TokenProfile
+	if err := s.db.First(&token, *signal.TokenID).Error; err != nil {
+		return nil
+	}
+	return &token
 }
 
 // settingsMap 将 settings 表转换成 key-value map，供推送策略读取运行时配置。
@@ -412,37 +509,344 @@ func priorityValue(priority string) int {
 }
 
 // formatSignalMessage 生成 Telegram 单条信号 HTML 文本。
-func (s *Scheduler) formatSignalMessage(signal *model.SignalEvent) string {
-	source := html.EscapeString(strings.ToUpper(signal.Source))
-	symbol := html.EscapeString(strings.ToUpper(signal.Symbol))
-	message := fmt.Sprintf("<b>%s · %s</b>\n%s · %s · score %.1f\n%s", source, symbol, html.EscapeString(signal.SignalType), html.EscapeString(signal.Priority), signal.Score, html.EscapeString(signal.Reason))
-	if tokenURL := explorerURL(signal.Chain, signal.Address); tokenURL != "" {
-		message += "\n" + html.EscapeString(tokenURL)
+func formatSignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	switch signal.Source {
+	case "s7":
+		return formatS7SignalMessage(signal, token)
+	case "s3":
+		return formatS3SignalMessage(signal)
+	case "s5":
+		return formatS5SignalMessage(signal, token)
+	case "s2":
+		return formatS2SignalMessage(signal, token)
+	case "s1":
+		return formatS1SignalMessage(signal, token)
 	}
-	return message
+
+	tags := parseStringList(signal.TagsJSON)
+	raw := parseRaw(signal.RawJSON)
+	tokenLinks := parseRaw("{}")
+	if token != nil {
+		tokenLinks = parseRaw(token.SocialLinksJSON)
+	}
+	title := signal.Symbol
+	if token != nil && strings.TrimSpace(token.Name) != "" {
+		title = token.Name
+	}
+	sourceLabel := labelOr(sourceLabels, signal.Source, strings.ToUpper(signal.Source))
+	chainLabel := labelOr(chainLabels, signal.Chain, signal.Chain)
+	tagLine := ""
+	if len(tags) > 0 {
+		tagLine = "\n标签：<code>" + html.EscapeString(tagText(tags, "")) + "</code>"
+	}
+	linkLine := ""
+	if len(tokenLinks) > 0 {
+		links := []string{}
+		for _, key := range []string{"twitter", "telegram", "website", "etherscan", "dexscreener"} {
+			if value := rawString(tokenLinks[key]); value != "" {
+				links = append(links, fmt.Sprintf("%s: %s", key, value))
+			}
+		}
+		if len(links) > 0 {
+			if len(links) > 3 {
+				links = links[:3]
+			}
+			linkLine = "\n" + html.EscapeString(strings.Join(links, " | "))
+		}
+	}
+	metrics := []string{}
+	if raw["mc"] != nil {
+		metrics = append(metrics, "市值   $"+formatCompactNumber(raw["mc"]))
+	}
+	if raw["liq"] != nil {
+		metrics = append(metrics, "流动性 $"+formatCompactNumber(raw["liq"]))
+	}
+	if raw["oi_d6h"] != nil {
+		metrics = append(metrics, "OI "+fmtSigned(raw["oi_d6h"], 1, "%"))
+	}
+	if raw["funding_pct"] != nil {
+		metrics = append(metrics, "费率 "+fmtSigned(raw["funding_pct"], 3, "%"))
+	}
+	metricBlock := ""
+	if len(metrics) > 0 {
+		metricBlock = "<pre>" + html.EscapeString(strings.Join(metrics, " | ")) + "</pre>"
+	}
+	return fmt.Sprintf(
+		"🔔 <b>%s</b> · <b>%s</b>\n<i>%s</i>\n\n%s<b>优先级</b> %s   <b>分数</b> %.1f\n<b>市场</b> %s%s%s%s",
+		html.EscapeString(sourceLabel),
+		html.EscapeString(title),
+		html.EscapeString(signal.Reason),
+		metricBlock,
+		html.EscapeString(signal.Priority),
+		signal.Score,
+		html.EscapeString(chainLabel),
+		formatContractLine(signal, token),
+		tagLine,
+		linkLine,
+	)
 }
 
 // formatS3Digest 生成 S3 摘要推送的 HTML 文本。
 func formatS3Digest(signals []*model.SignalEvent) string {
-	lines := []string{"<b>S3 Heat Digest</b>"}
-	for _, signal := range signals {
-		lines = append(lines, fmt.Sprintf("%s · %s · %.1f · %s", html.EscapeString(strings.ToUpper(signal.Symbol)), html.EscapeString(signal.Priority), signal.Score, html.EscapeString(signal.Reason)))
+	lines := []string{"🔥 <b>S3 热度摘要</b>", "<i>10 分钟窗口内值得看的合约热度信号</i>", ""}
+	for idx, signal := range signals {
+		raw := parseRaw(signal.RawJSON)
+		lines = append(lines, fmt.Sprintf(
+			"<b>%d. %s</b> · %s · <b>%s</b> (score %.1f)",
+			idx+1,
+			html.EscapeString(signal.Symbol),
+			html.EscapeString(labelOr(s3TypeLabels, signal.SignalType, signal.SignalType)),
+			html.EscapeString(signal.Priority),
+			signal.Score,
+		))
+		lines = append(lines, "<i>"+html.EscapeString(signal.Reason)+"</i>")
+		metricParts := []string{}
+		if raw["px_chg"] != nil {
+			metricParts = append(metricParts, "24h "+fmtSigned(raw["px_chg"], 1, "%"))
+		}
+		if raw["oi_d6h"] != nil {
+			metricParts = append(metricParts, "OI "+fmtSigned(raw["oi_d6h"], 1, "%"))
+		}
+		if raw["funding_pct"] != nil {
+			metricParts = append(metricParts, "费率 "+fmtSigned(raw["funding_pct"], 3, "%"))
+		}
+		if raw["vol"] != nil {
+			metricParts = append(metricParts, "成交额 $"+formatCompactNumber(raw["vol"]))
+		}
+		if len(metricParts) > 0 {
+			lines = append(lines, "<pre>"+html.EscapeString(strings.Join(metricParts, " | "))+"</pre>")
+		}
+		if contractLine := strings.TrimSpace(formatContractLine(signal, nil)); contractLine != "" {
+			lines = append(lines, contractLine)
+		}
+		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
 }
 
-// explorerURL 根据链和地址生成区块浏览器 token 链接。
-func explorerURL(chain string, address string) string {
-	switch strings.ToLower(chain) {
-	case "eth", "ethereum":
-		return "https://etherscan.io/token/" + address
-	case "bsc":
-		return "https://bscscan.com/token/" + address
-	case "base":
-		return "https://basescan.org/token/" + address
-	default:
-		return ""
+func formatS3SignalMessage(signal *model.SignalEvent) string {
+	raw := parseRaw(signal.RawJSON)
+	tags := parseStringList(signal.TagsJSON)
+	signalLabel := labelOr(s3TypeLabels, signal.SignalType, signal.SignalType)
+	summary := labelOr(s3TypeSummaries, signal.SignalType, signal.Reason)
+	metricLines := []string{
+		fmt.Sprintf("💰 价格: %s   24h: %s", formatPrice(raw["price"]), fmtSigned(raw["px_chg"], 1, "%")),
+		fmt.Sprintf("📉 费率: %s   📊 OI: %s", fmtSigned(raw["funding_pct"], 3, "%"), fmtSigned(raw["oi_d6h"], 1, "%")),
+		fmt.Sprintf("🌐 成交额: $%s   市值: $%s", formatCompactNumber(raw["vol"]), formatCompactNumber(raw["est_mcap"])),
+		"🧾 现货: " + boolCN(raw["has_spot"]),
 	}
+	if heat, ok := rawFloatOK(raw["heat"]); ok {
+		metricLines[3] += fmt.Sprintf("   热度分: %.0f", heat)
+	}
+	if raw["oi_usd"] != nil {
+		metricLines = append(metricLines, "📦 未平仓: $"+formatCompactNumber(raw["oi_usd"]))
+	}
+	lines := []string{
+		"🔥 <b>S3 热度确认</b>",
+		fmt.Sprintf("🚀 <b>%s · %s</b>", html.EscapeString(signal.Symbol), html.EscapeString(signalLabel)),
+		"⏰ " + formatBJTime(signal.CreatedAt),
+		"",
+	}
+	lines = appendEscapedLines(lines, metricLines...)
+	if contractLine := formatContractLine(signal, nil); contractLine != "" {
+		lines = append(lines, contractLine)
+	}
+	lines = append(lines,
+		"",
+		"📝 <i>"+html.EscapeString(summary)+"</i>",
+		"🔎 "+html.EscapeString(signal.Reason),
+		"🏷 S3 热度确认 | "+html.EscapeString(tagText(tags, "#s3")),
+	)
+	return strings.Join(lines, "\n")
+}
+
+func formatS7SignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	raw := parseRaw(signal.RawJSON)
+	tags := parseStringList(signal.TagsJSON)
+	signalLabel := labelOr(s7TypeLabels, signal.SignalType, signal.SignalType)
+	summary := labelOr(s7TypeSummaries, signal.SignalType, signal.Reason)
+	tokenName := signal.Symbol
+	if token != nil && strings.TrimSpace(token.Name) != "" {
+		tokenName = token.Name
+	}
+	recipientType := mapLabel(map[string]string{"dex": "DEX", "cex": "CEX", "pool": "LP 池"}, strings.ToLower(rawString(raw["recipient_type"])), strings.ToUpper(rawStringDefault(raw["recipient_type"], "unknown")))
+	recipientName := rawStringDefault(raw["recipient_name"], "-")
+	amountLine := "💸 数量: " + signal.Symbol
+	if amount, ok := rawFloatOK(raw["amount"]); ok {
+		amountLine = fmt.Sprintf("💸 数量: %s %s", formatFloatComma(amount, 4), signal.Symbol)
+	}
+	usdLine := "💰 估值: 未知"
+	if raw["usd_value"] != nil {
+		usdLine = "💰 估值: $" + formatCompactNumber(raw["usd_value"])
+	}
+	priceLine := "📈 价格: 未知"
+	if raw["price"] != nil {
+		priceLine = "📈 价格: " + formatPrice(raw["price"])
+	} else if raw["price_usd"] != nil {
+		priceLine = "📈 价格: " + formatPrice(raw["price_usd"])
+	}
+	lines := []string{
+		"🐋 <b>S7 V神卖币</b>",
+		fmt.Sprintf("🚨 <b>%s · %s</b>", html.EscapeString(tokenName), html.EscapeString(signalLabel)),
+		"⏰ " + formatBJTime(signal.CreatedAt),
+		"",
+	}
+	lines = appendEscapedLines(lines,
+		"🧭 路径: "+recipientType+" -> "+recipientName,
+		amountLine,
+		usdLine,
+		priceLine,
+	)
+	if contractLine := formatContractLine(signal, token); contractLine != "" {
+		lines = append(lines, contractLine)
+	}
+	lines = append(lines,
+		"",
+		"📝 <i>"+html.EscapeString(summary)+"</i>",
+		"📍 "+html.EscapeString(signal.Reason),
+		"🏷 S7 V神卖币 | "+html.EscapeString(tagText(tags, "#s7")),
+	)
+	if txURL := rawString(raw["etherscan_url"]); txURL != "" {
+		lines = append(lines, fmt.Sprintf(`🔎 交易: <a href="%s">etherscan</a>`, html.EscapeString(txURL)))
+	} else if txHash := rawString(raw["tx_hash"]); strings.HasPrefix(txHash, "0x") {
+		lines = append(lines, fmt.Sprintf(`🔎 交易: <a href="%s">etherscan</a>`, html.EscapeString("https://etherscan.io/tx/"+txHash)))
+	}
+	if chartURL := rawString(raw["dexscreener_url"]); chartURL != "" {
+		lines = append(lines, fmt.Sprintf(`📊 图表: <a href="%s">dexscreener</a>`, html.EscapeString(chartURL)))
+	} else if address := extractCopyableAddress(signal, token); address != "" {
+		lines = append(lines, fmt.Sprintf(`📊 图表: <a href="%s">dexscreener</a>`, html.EscapeString("https://dexscreener.com/ethereum/"+address)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatS5SignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	raw := parseRaw(signal.RawJSON)
+	tags := parseStringList(signal.TagsJSON)
+	signalLabel := labelOr(s5TypeLabels, signal.SignalType, signal.SignalType)
+	summary := labelOr(s5TypeSummaries, signal.SignalType, signal.Reason)
+	chainLabel := labelOr(chainLabels, signal.Chain, signal.Chain)
+	safety := rawMap(raw["safety"])
+	momentum := rawMap(raw["momentum"])
+	social := map[string]any{}
+	if token != nil {
+		social = parseRaw(token.SocialLinksJSON)
+	}
+	metricLines := []string{fmt.Sprintf("🧭 链: %s   优先级: %s", chainLabel, signal.Priority)}
+	if raw["buy_ratio"] != nil {
+		metricLines = append(metricLines, "🧲 买卖比: "+formatFixed(raw["buy_ratio"], 2))
+	}
+	if pctGain := firstPresent(momentum, "pct_gain", "PctGain"); pctGain != nil {
+		metricLines = append(metricLines, "📈 动量: +"+formatFixed(pctGain, 1)+"%")
+	}
+	if len(safety) > 0 {
+		line := "🛡 安全: 失败"
+		if rawBool(safety["safe"]) {
+			line = "🛡 安全: 通过"
+		}
+		if safety["sell_tax"] != nil {
+			line += "   卖税: " + formatFixed(safety["sell_tax"], 2)
+		}
+		metricLines = append(metricLines, line)
+	}
+	socialNames := []string{}
+	for _, pair := range []struct{ key, name string }{{"twitter", "Twitter"}, {"telegram", "TG"}, {"website", "Web"}} {
+		if rawString(social[pair.key]) != "" {
+			socialNames = append(socialNames, pair.name)
+		}
+	}
+	if len(socialNames) > 0 {
+		metricLines = append(metricLines, "🔗 社区: "+strings.Join(socialNames, " / "))
+	}
+	lines := []string{
+		"🧭 <b>S5 链上发现</b>",
+		fmt.Sprintf("🧨 <b>%s · %s</b>", html.EscapeString(signal.Symbol), html.EscapeString(signalLabel)),
+		"⏰ " + formatBJTime(signal.CreatedAt),
+		"",
+	}
+	lines = appendEscapedLines(lines, metricLines...)
+	if contractLine := formatContractLine(signal, token); contractLine != "" {
+		lines = append(lines, contractLine)
+	}
+	lines = append(lines,
+		"",
+		"📝 <i>"+html.EscapeString(summary)+"</i>",
+		"🔎 "+html.EscapeString(signal.Reason),
+		"🏷 S5 链上发现 | "+html.EscapeString(tagText(tags, "#s5")),
+	)
+	return strings.Join(lines, "\n")
+}
+
+func formatS2SignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	raw := parseRaw(signal.RawJSON)
+	tags := parseStringList(signal.TagsJSON)
+	signalLabel := labelOr(s2TypeLabels, signal.SignalType, signal.SignalType)
+	summary := labelOr(s2TypeSummaries, signal.SignalType, signal.Reason)
+	metricLines := []string{
+		fmt.Sprintf("📉 费率: %s → %s", fmtSigned(raw["previous_funding_pct"], 3, "%"), fmtSigned(raw["current_funding_pct"], 3, "%")),
+		fmt.Sprintf("📊 OI: %s   现货: %s", fmtSigned(raw["oi_change_pct"], 1, "%"), boolCN(raw["has_spot"])),
+		"🌐 成交额: $" + formatCompactNumber(raw["volume_usd"]),
+	}
+	if segments := rawFloatSlice(raw["oi_segments"]); len(segments) > 0 {
+		parts := make([]string, 0, len(segments))
+		for _, value := range segments {
+			parts = append(parts, fmt.Sprintf("%.1fM", value/1_000_000))
+		}
+		metricLines = append(metricLines, "📦 OI轨迹: "+strings.Join(parts, " > "))
+	}
+	lines := []string{
+		"🧮 <b>S2 费率翻转</b>",
+		fmt.Sprintf("⚡ <b>%s · %s</b>", html.EscapeString(signal.Symbol), html.EscapeString(signalLabel)),
+		"⏰ " + formatBJTime(signal.CreatedAt),
+		"",
+	}
+	lines = appendEscapedLines(lines, metricLines...)
+	if contractLine := formatContractLine(signal, token); contractLine != "" {
+		lines = append(lines, contractLine)
+	}
+	lines = append(lines,
+		"",
+		"📝 <i>"+html.EscapeString(summary)+"</i>",
+		"🔎 "+html.EscapeString(signal.Reason),
+		"🏷 S2 费率翻转 | "+html.EscapeString(tagText(tags, "#s2")),
+	)
+	return strings.Join(lines, "\n")
+}
+
+func formatS1SignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	raw := parseRaw(signal.RawJSON)
+	tags := parseStringList(signal.TagsJSON)
+	signalLabel := labelOr(s1TypeLabels, signal.SignalType, signal.SignalType)
+	summary := labelOr(s1TypeSummaries, signal.SignalType, signal.Reason)
+	kind := labelOr(s1KindLabels, rawStringDefault(raw["announcement_kind"], "other"), rawStringDefault(raw["announcement_kind"], "公告信号"))
+	metricLines := []string{
+		"📌 类型: " + kind,
+		"📅 发现日期: " + rawStringDefault(raw["launch_date"], "-"),
+		fmt.Sprintf("💰 价格: %s   市值: $%s", formatPrice(raw["price"]), formatCompactNumber(raw["mcap"])),
+		"🏦 FDV: $" + formatCompactNumber(raw["fdv"]),
+	}
+	if vcs := rawStringSlice(raw["vcs"]); len(vcs) > 0 {
+		if len(vcs) > 3 {
+			vcs = vcs[:3]
+		}
+		metricLines = append(metricLines, "🏛 机构: "+strings.Join(vcs, " / "))
+	}
+	lines := []string{
+		"📰 <b>S1 币安公告</b>",
+		fmt.Sprintf("📣 <b>%s · %s</b>", html.EscapeString(signal.Symbol), html.EscapeString(signalLabel)),
+		"⏰ " + formatBJTime(signal.CreatedAt),
+		"",
+	}
+	lines = appendEscapedLines(lines, metricLines...)
+	if contractLine := formatContractLine(signal, token); contractLine != "" {
+		lines = append(lines, contractLine)
+	}
+	lines = append(lines,
+		"",
+		"📝 <i>"+html.EscapeString(summary)+"</i>",
+		"🔎 "+html.EscapeString(signal.Reason),
+		"🏷 S1 币安公告 | "+html.EscapeString(tagText(tags, "#s1")),
+	)
+	return strings.Join(lines, "\n")
 }
 
 // tokenKey 生成推送策略内部使用的 token 归一化键。
@@ -457,6 +861,316 @@ func parseRaw(rawJSON string) map[string]any {
 		return map[string]any{}
 	}
 	return raw
+}
+
+func parseStringList(jsonText string) []string {
+	var values []string
+	if json.Unmarshal([]byte(jsonText), &values) == nil {
+		return values
+	}
+	var anys []any
+	if json.Unmarshal([]byte(jsonText), &anys) != nil {
+		return nil
+	}
+	result := make([]string, 0, len(anys))
+	for _, value := range anys {
+		if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func formatContractLine(signal *model.SignalEvent, token *model.TokenProfile) string {
+	address := extractCopyableAddress(signal, token)
+	if address == "" {
+		return ""
+	}
+	return "\n📄 合约：<code>" + html.EscapeString(address) + "</code>"
+}
+
+func copyItemsForSignal(signal *model.SignalEvent, token *model.TokenProfile) []radartelegram.CopyItem {
+	address := extractCopyableAddress(signal, token)
+	if address == "" {
+		return nil
+	}
+	return []radartelegram.CopyItem{{Label: "复制合约", Text: address}}
+}
+
+func copyItemsForSignals(signals []*model.SignalEvent) []radartelegram.CopyItem {
+	items := []radartelegram.CopyItem{}
+	seen := map[string]bool{}
+	for _, signal := range signals {
+		address := extractCopyableAddress(signal, nil)
+		if address == "" || seen[address] {
+			continue
+		}
+		seen[address] = true
+		label := "复制合约"
+		if strings.TrimSpace(signal.Symbol) != "" {
+			label = "复制 " + signal.Symbol
+		}
+		if len([]rune(label)) > 20 {
+			label = string([]rune(label)[:20])
+		}
+		items = append(items, radartelegram.CopyItem{Label: label, Text: address})
+		if len(items) >= 6 {
+			break
+		}
+	}
+	return items
+}
+
+func extractCopyableAddress(signal *model.SignalEvent, token *model.TokenProfile) string {
+	candidates := []string{}
+	if token != nil {
+		candidates = append(candidates, strings.TrimSpace(token.Address))
+	}
+	if signal != nil {
+		candidates = append(candidates, strings.TrimSpace(signal.Address))
+	}
+	for _, candidate := range candidates {
+		if evmAddressRE.MatchString(candidate) || base58AddressRE.MatchString(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func appendEscapedLines(lines []string, values ...string) []string {
+	for _, value := range values {
+		lines = append(lines, html.EscapeString(value))
+	}
+	return lines
+}
+
+func tagText(tags []string, fallback string) string {
+	if len(tags) == 0 {
+		return fallback
+	}
+	limit := len(tags)
+	if limit > 6 {
+		limit = 6
+	}
+	parts := make([]string, 0, limit)
+	for _, tag := range tags[:limit] {
+		parts = append(parts, "#"+tag)
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatBJTime(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, value)
+	}
+	if err != nil {
+		return "-"
+	}
+	return parsed.In(bjLocation).Format("01-02 15:04")
+}
+
+func fmtSigned(value any, decimals int, suffix string) string {
+	number, ok := rawFloatOK(value)
+	if !ok {
+		return "-"
+	}
+	return fmt.Sprintf("%+.*f%s", decimals, number, suffix)
+}
+
+func formatPrice(value any) string {
+	number, ok := rawFloatOK(value)
+	if !ok {
+		return "-"
+	}
+	switch {
+	case number >= 100:
+		return fmt.Sprintf("%.2f", number)
+	case number >= 1:
+		return trimFloat(fmt.Sprintf("%.4f", number))
+	case number >= 0.01:
+		return trimFloat(fmt.Sprintf("%.5f", number))
+	default:
+		return trimFloat(fmt.Sprintf("%.8f", number))
+	}
+}
+
+func formatCompactNumber(value any) string {
+	number, ok := rawFloatOK(value)
+	if !ok {
+		return "-"
+	}
+	abs := number
+	if abs < 0 {
+		abs = -abs
+	}
+	switch {
+	case abs >= 1_000_000_000:
+		return fmt.Sprintf("%.2fB", number/1_000_000_000)
+	case abs >= 1_000_000:
+		return fmt.Sprintf("%.2fM", number/1_000_000)
+	case abs >= 1_000:
+		return fmt.Sprintf("%.2fK", number/1_000)
+	default:
+		return fmt.Sprintf("%.2f", number)
+	}
+}
+
+func formatFixed(value any, decimals int) string {
+	number, ok := rawFloatOK(value)
+	if !ok {
+		return "-"
+	}
+	return fmt.Sprintf("%.*f", decimals, number)
+}
+
+func formatFloatComma(value float64, decimals int) string {
+	formatted := fmt.Sprintf("%.*f", decimals, value)
+	parts := strings.SplitN(formatted, ".", 2)
+	whole := parts[0]
+	sign := ""
+	if strings.HasPrefix(whole, "-") {
+		sign = "-"
+		whole = strings.TrimPrefix(whole, "-")
+	}
+	var groups []string
+	for len(whole) > 3 {
+		groups = append([]string{whole[len(whole)-3:]}, groups...)
+		whole = whole[:len(whole)-3]
+	}
+	groups = append([]string{whole}, groups...)
+	result := sign + strings.Join(groups, ",")
+	if len(parts) == 2 {
+		result += "." + parts[1]
+	}
+	return result
+}
+
+func trimFloat(value string) string {
+	value = strings.TrimRight(value, "0")
+	return strings.TrimRight(value, ".")
+}
+
+func boolCN(value any) string {
+	if rawBool(value) {
+		return "有"
+	}
+	return "无"
+}
+
+func labelOr(labels map[string]string, key string, fallback string) string {
+	if value, ok := labels[key]; ok {
+		return value
+	}
+	return fallback
+}
+
+func mapLabel(labels map[string]string, key string, fallback string) string {
+	if value, ok := labels[key]; ok {
+		return value
+	}
+	return fallback
+}
+
+func rawMap(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	default:
+		return map[string]any{}
+	}
+}
+
+func firstPresent(values map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func rawString(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func rawStringDefault(value any, fallback string) string {
+	if text := rawString(value); text != "" {
+		return text
+	}
+	return fallback
+}
+
+func rawBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return typed == "1" || strings.EqualFold(typed, "true") || strings.EqualFold(typed, "yes") || strings.EqualFold(typed, "on")
+	case float64:
+		return typed != 0
+	case int:
+		return typed != 0
+	default:
+		return false
+	}
+}
+
+func rawFloatOK(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconvParseFloat(typed)
+		return parsed, err == nil && strings.TrimSpace(typed) != ""
+	case nil:
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+func rawFloatSlice(value any) []float64 {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]float64, 0, len(values))
+	for _, item := range values {
+		if number, ok := rawFloatOK(item); ok {
+			result = append(result, number)
+		}
+	}
+	return result
+}
+
+func rawStringSlice(value any) []string {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, item := range values {
+		if text := rawString(item); text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 // rawFloat 从 raw_json 中的动态类型值读取 float64。

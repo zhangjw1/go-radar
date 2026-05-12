@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -107,6 +108,88 @@ func TestFindBlockingRecentPushHonorsPriorityUpgrade(t *testing.T) {
 	}
 	if blocking != nil {
 		t.Fatalf("expected high priority upgrade to bypass cooldown")
+	}
+}
+
+func TestFormatSignalMessageMatchesPythonTelegramStyle(t *testing.T) {
+	createdAt := "2026-05-12T01:02:03Z"
+	token := &model.TokenProfile{
+		Chain:           "ethereum",
+		Address:         "0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2",
+		Symbol:          "MKR",
+		Name:            "Maker",
+		SocialLinksJSON: `{"twitter":"https://x.example/mkr","telegram":"https://t.me/mkr","website":"https://makerdao.com"}`,
+	}
+	signal := &model.SignalEvent{
+		Source:     "s7",
+		Chain:      "ethereum",
+		Address:    token.Address,
+		Symbol:     "MKR",
+		SignalType: "vitalik_sell",
+		Priority:   "high",
+		Score:      95,
+		Reason:     "test reason",
+		TagsJSON:   `["vitalik","dex"]`,
+		RawJSON:    `{"recipient_type":"dex","recipient_name":"Uniswap","amount":1234.5,"usd_value":2500000,"price_usd":123.456,"tx_hash":"0xabc"}`,
+		CreatedAt:  createdAt,
+	}
+
+	text := formatSignalMessage(signal, token)
+
+	for _, want := range []string{
+		"🐋 <b>S7 V神卖币</b>",
+		"🚨 <b>Maker · V神卖币</b>",
+		"⏰ 05-12 09:02",
+		"🧭 路径: DEX -&gt; Uniswap",
+		"💸 数量: 1,234.5000 MKR",
+		"💰 估值: $2.50M",
+		"📄 合约：<code>0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2</code>",
+		"🏷 S7 V神卖币 | #vitalik #dex",
+		`🔎 交易: <a href="https://etherscan.io/tx/0xabc">etherscan</a>`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected message to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestFormatS3DigestMatchesPythonTelegramStyle(t *testing.T) {
+	signals := []*model.SignalEvent{{
+		Source:     "s3",
+		Chain:      "binance_perp",
+		Address:    "btcusdt",
+		Symbol:     "BTC",
+		SignalType: "heat_plus_oi",
+		Priority:   "medium",
+		Score:      82.5,
+		Reason:     "heat and oi",
+		RawJSON:    `{"px_chg":3.21,"oi_d6h":8.9,"funding_pct":-0.0123,"vol":123456789}`,
+	}}
+
+	text := formatS3Digest(signals)
+
+	for _, want := range []string{
+		"🔥 <b>S3 热度摘要</b>",
+		"<i>10 分钟窗口内值得看的合约热度信号</i>",
+		"<b>1. BTC</b> · 热度 + OI · <b>medium</b> (score 82.5)",
+		"<pre>24h +3.2% | OI +8.9% | 费率 -0.012% | 成交额 $123.46M</pre>",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected digest to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
+func TestCopyItemsForSignalsDedupesContracts(t *testing.T) {
+	signals := []*model.SignalEvent{
+		{Source: "s5", Address: "0x1111111111111111111111111111111111111111", Symbol: "AAA"},
+		{Source: "system", Address: "0x1111111111111111111111111111111111111111", Symbol: "AAA"},
+	}
+
+	items := copyItemsForSignals(signals)
+
+	if len(items) != 1 || items[0].Label != "复制 AAA" || items[0].Text != "0x1111111111111111111111111111111111111111" {
+		t.Fatalf("unexpected copy items: %#v", items)
 	}
 }
 
