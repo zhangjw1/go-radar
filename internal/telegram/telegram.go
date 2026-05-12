@@ -83,7 +83,7 @@ func (n *Notifier) SendText(ctx context.Context, text string, copyItems ...CopyI
 		request.Header.Set("Content-Type", "application/json")
 		response, err := n.client.Do(request)
 		if err != nil {
-			return err
+			return fmt.Errorf("telegram sendMessage request failed: %w", err)
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {

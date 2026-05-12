@@ -180,6 +180,40 @@ func TestFormatS3DigestMatchesPythonTelegramStyle(t *testing.T) {
 	}
 }
 
+func TestFormatResonanceSignalMessageMatchesScannerStyle(t *testing.T) {
+	signal := &model.SignalEvent{
+		Source:     "system",
+		Chain:      "binance_perp",
+		Address:    "crvusdt",
+		Symbol:     "CRV",
+		SignalType: "resonance",
+		Priority:   "high",
+		Score:      77.5,
+		Reason:     "Cross-source resonance: s2, s3",
+		TagsJSON:   `["resonance","s2","s3"]`,
+		RawJSON:    `{"sources":["s2","s3"],"base_signal_id":42}`,
+		CreatedAt:  "2026-05-12T09:36:00Z",
+	}
+
+	text := formatSignalMessage(signal, nil)
+
+	for _, want := range []string{
+		"🛰 <b>系统共振</b>",
+		"⚡ <b>CRV · 跨源确认</b>",
+		"⏰ 05-12 17:36",
+		"🧭 来源: s2 + s3",
+		"📊 强度: 2 路雷达   优先级: high",
+		"🎯 分数: 77.5   市场: Binance 合约",
+		"📝 <i>多个雷达来源同时命中同一标的，信号强度高于单一路径，适合优先复核。</i>",
+		"🔎 跨源共振: s2, s3",
+		"🏷 系统共振 | #resonance #s2 #s3",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected resonance message to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestCopyItemsForSignalsDedupesContracts(t *testing.T) {
 	signals := []*model.SignalEvent{
 		{Source: "s5", Address: "0x1111111111111111111111111111111111111111", Symbol: "AAA"},

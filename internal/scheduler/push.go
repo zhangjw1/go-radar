@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"log"
 	"os"
 	"regexp"
 	"sort"
@@ -134,7 +133,7 @@ func (s *Scheduler) createResonanceSignals(baseSignals []*model.SignalEvent) ([]
 			SignalType: "resonance",
 			Priority:   "high",
 			Score:      computeResonanceScore(len(sources), signal.Priority, signal.Score),
-			Reason:     "Cross-source resonance: " + strings.Join(sources, ", "),
+			Reason:     "跨源共振: " + strings.Join(sources, ", "),
 			Tags:       append([]string{"resonance"}, sources...),
 			Raw:        map[string]any{"sources": sources, "base_signal_id": signal.ID},
 		}
@@ -197,7 +196,7 @@ func (s *Scheduler) pushSignals(ctx context.Context, baseSignals []*model.Signal
 			return pushedIDs, err
 		}
 		if blocking != nil {
-			log.Printf("suppressed repeat push for %s on %s after %s/%s", signal.Symbol, signal.Source, blocking.Source, blocking.SignalType)
+			logInfo("suppressed repeat push for %s on %s after %s/%s", signal.Symbol, signal.Source, blocking.Source, blocking.SignalType)
 			continue
 		}
 		token := s.tokenForSignal(signal)
@@ -510,6 +509,9 @@ func priorityValue(priority string) int {
 
 // formatSignalMessage 生成 Telegram 单条信号 HTML 文本。
 func formatSignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	if signal.Source == "system" && signal.SignalType == "resonance" {
+		return formatResonanceSignalMessage(signal, token)
+	}
 	switch signal.Source {
 	case "s7":
 		return formatS7SignalMessage(signal, token)
@@ -584,6 +586,51 @@ func formatSignalMessage(signal *model.SignalEvent, token *model.TokenProfile) s
 		tagLine,
 		linkLine,
 	)
+}
+
+func formatResonanceSignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
+	raw := parseRaw(signal.RawJSON)
+	tags := parseStringList(signal.TagsJSON)
+	sources := rawStringSlice(raw["sources"])
+	if len(sources) == 0 {
+		for _, tag := range tags {
+			if strings.HasPrefix(tag, "s") && tag != "system" {
+				sources = append(sources, tag)
+			}
+		}
+	}
+	sort.Strings(sources)
+	sourceText := "-"
+	if len(sources) > 0 {
+		sourceText = strings.Join(sources, " + ")
+	}
+	title := signal.Symbol
+	if token != nil && strings.TrimSpace(token.Name) != "" {
+		title = token.Name
+	}
+	chainLabel := labelOr(chainLabels, signal.Chain, signal.Chain)
+	summary := "多个雷达来源同时命中同一标的，信号强度高于单一路径，适合优先复核。"
+	lines := []string{
+		"🛰 <b>系统共振</b>",
+		fmt.Sprintf("⚡ <b>%s · 跨源确认</b>", html.EscapeString(title)),
+		"⏰ " + formatBJTime(signal.CreatedAt),
+		"",
+	}
+	lines = appendEscapedLines(lines,
+		fmt.Sprintf("🧭 来源: %s", sourceText),
+		fmt.Sprintf("📊 强度: %d 路雷达   优先级: %s", len(sources), signal.Priority),
+		fmt.Sprintf("🎯 分数: %.1f   市场: %s", signal.Score, chainLabel),
+	)
+	if contractLine := formatContractLine(signal, token); contractLine != "" {
+		lines = append(lines, contractLine)
+	}
+	lines = append(lines,
+		"",
+		"📝 <i>"+html.EscapeString(summary)+"</i>",
+		"🔎 "+html.EscapeString(resonanceReasonText(signal.Reason, sources)),
+		"🏷 系统共振 | "+html.EscapeString(tagText(tags, "#resonance")),
+	)
+	return strings.Join(lines, "\n")
 }
 
 // formatS3Digest 生成 S3 摘要推送的 HTML 文本。
@@ -957,6 +1004,24 @@ func tagText(tags []string, fallback string) string {
 		parts = append(parts, "#"+tag)
 	}
 	return strings.Join(parts, " ")
+}
+
+func resonanceReasonText(reason string, sources []string) string {
+	reason = strings.TrimSpace(reason)
+	if strings.HasPrefix(reason, "Cross-source resonance:") {
+		sourceText := strings.TrimSpace(strings.TrimPrefix(reason, "Cross-source resonance:"))
+		if sourceText == "" && len(sources) > 0 {
+			sourceText = strings.Join(sources, ", ")
+		}
+		return "跨源共振: " + sourceText
+	}
+	if reason != "" {
+		return reason
+	}
+	if len(sources) > 0 {
+		return "跨源共振: " + strings.Join(sources, ", ")
+	}
+	return "跨源共振"
 }
 
 func formatBJTime(value string) string {

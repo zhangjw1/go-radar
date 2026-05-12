@@ -74,7 +74,7 @@ func (s *Scheduler) Specs() []Spec {
 // Start 启动每个扫描器对应的后台循环。
 func (s *Scheduler) Start(parent context.Context) {
 	if !s.enabled {
-		log.Print("Go scheduler disabled; set GO_RADAR_ENABLE_SCHEDULER=true to enable placeholder jobs")
+		logInfo("Go scheduler disabled; set GO_RADAR_ENABLE_SCHEDULER=true to enable placeholder jobs")
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
@@ -98,7 +98,7 @@ func (s *Scheduler) Start(parent context.Context) {
 			}
 		}()
 	}
-	log.Printf("Go scheduler enabled with %d placeholder jobs", len(s.specs))
+	logInfo("Go scheduler enabled with %d placeholder jobs", len(s.specs))
 }
 
 // Stop 请求后台任务退出，并等待所有任务完成。
@@ -148,7 +148,7 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 	resonanceCount := 0
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	log.Printf("scanner %s started", name)
+	logInfo("scanner %s started", name)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			stack := string(debug.Stack())
@@ -157,14 +157,14 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 				"panic": fmt.Sprint(recovered),
 				"stack": stack,
 			}, errorText, signalCount, snapshotCount)
-			log.Printf("scanner %s panic: %v\n%s", name, recovered, stack)
+			logError("scanner %s panic: %v\n%s", name, recovered, stack)
 		}
 	}()
 
 	result, err := scan(ctx)
 	if err != nil {
 		s.recordRunWithStart(name, startedAt, "error", map[string]any{}, err.Error(), 0, 0)
-		log.Printf("scanner %s ended status=error signals=0 snapshots=0 pushed=0 warnings=0 duration=%s", name, time.Since(startTime).Round(time.Millisecond))
+		logError("scanner %s ended status=error signals=0 snapshots=0 pushed=0 warnings=0 duration=%s", name, time.Since(startTime).Round(time.Millisecond))
 		return
 	}
 
@@ -217,7 +217,7 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 		status = "warning"
 	}
 	s.recordRunWithStart(name, startedAt, status, metadata, "", signalCount, snapshotCount)
-	log.Printf("scanner %s ended status=%s signals=%d snapshots=%d pushed=%d resonance=%d warnings=%d duration=%s", name, status, signalCount, snapshotCount, pushedCount, resonanceCount, len(result.Warnings), time.Since(startTime).Round(time.Millisecond))
+	logScannerEnd(name, status, signalCount, snapshotCount, pushedCount, resonanceCount, len(result.Warnings), time.Since(startTime).Round(time.Millisecond))
 }
 
 // envBool 从环境变量解析布尔配置。
@@ -263,14 +263,39 @@ func (s *Scheduler) recordRunWithStart(scanner string, startedAt string, status 
 		MetadataJSON:  string(metadataJSON),
 	}
 	if err := s.db.Create(&run).Error; err != nil {
-		log.Printf("record scanner run for %s failed: %v", scanner, err)
+		logError("record scanner run for %s failed: %v", scanner, err)
 	}
 	if strings.TrimSpace(errorText) != "" {
-		log.Printf("scanner %s finished with %s: %s", scanner, status, errorText)
+		logError("scanner %s finished with %s: %s", scanner, status, errorText)
 	}
 	if warnings := warningsFromMetadata(metadata); len(warnings) > 0 {
-		log.Printf("scanner %s warnings (%d): %s", scanner, len(warnings), strings.Join(firstN(warnings, 5), " | "))
+		logWarn("scanner %s warnings (%d): %s", scanner, len(warnings), strings.Join(firstN(warnings, 5), " | "))
 	}
+}
+
+func logScannerEnd(scanner string, status string, signalCount int, snapshotCount int, pushedCount int, resonanceCount int, warningCount int, duration time.Duration) {
+	message := "scanner %s ended status=%s signals=%d snapshots=%d pushed=%d resonance=%d warnings=%d duration=%s"
+	args := []any{scanner, status, signalCount, snapshotCount, pushedCount, resonanceCount, warningCount, duration}
+	switch status {
+	case "error":
+		logError(message, args...)
+	case "warning":
+		logWarn(message, args...)
+	default:
+		logInfo(message, args...)
+	}
+}
+
+func logInfo(format string, args ...any) {
+	fmt.Fprintf(os.Stdout, "%s [INFO] "+format+"\n", append([]any{time.Now().Format("2006/01/02 15:04:05")}, args...)...)
+}
+
+func logWarn(format string, args ...any) {
+	log.Printf("[WARN] "+format, args...)
+}
+
+func logError(format string, args ...any) {
+	log.Printf("[ERROR] "+format, args...)
 }
 
 func warningsFromMetadata(metadata map[string]any) []string {
