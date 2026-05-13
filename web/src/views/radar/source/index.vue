@@ -447,6 +447,17 @@
     return `${value.slice(0, 6)}...${value.slice(-6)}`;
   };
 
+  const normalizeFilterOptions = (raw?: Partial<FilterOptions> & Record<string, any>) => {
+    if (!raw) return filterOptions.value;
+    return {
+      sources: raw.sources || raw.Sources || [],
+      chains: raw.chains || raw.Chains || [],
+      signalTypes: raw.signalTypes || raw.SignalTypes || [],
+      priorities: raw.priorities || raw.Priorities || ['high', 'medium', 'low'],
+      timeRanges: raw.timeRanges || raw.TimeRanges || ['1h', '6h', '24h', '7d'],
+    };
+  };
+
   const buildParams = (current = pagination.current) => {
     const params: Record<string, unknown> = {
       source: props.source,
@@ -475,7 +486,7 @@
       pagination.pageSize = res.data?.pageSize || pagination.pageSize;
       pagination.total = res.data?.total || 0;
       if (res.data?.filters) {
-        filterOptions.value = res.data.filters;
+        filterOptions.value = normalizeFilterOptions(res.data.filters);
       }
     } catch (err) {
       renderData.value = [];

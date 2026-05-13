@@ -72,11 +72,11 @@ type SignalFilters struct {
 
 // FilterOptions 是页面下拉框可选项集合。
 type FilterOptions struct {
-	Sources     []string // Sources 是来源下拉选项。
-	Chains      []string // Chains 是链下拉选项。
-	SignalTypes []string // SignalTypes 是信号类型下拉选项。
-	Priorities  []string // Priorities 是优先级下拉选项。
-	TimeRanges  []string // TimeRanges 是时间范围下拉选项。
+	Sources     []string `json:"sources"`     // Sources 是来源下拉选项。
+	Chains      []string `json:"chains"`      // Chains 是链下拉选项。
+	SignalTypes []string `json:"signalTypes"` // SignalTypes 是信号类型下拉选项。
+	Priorities  []string `json:"priorities"`  // Priorities 是优先级下拉选项。
+	TimeRanges  []string `json:"timeRanges"`  // TimeRanges 是时间范围下拉选项。
 }
 
 // DashboardData 是监控总览页的数据模型。
