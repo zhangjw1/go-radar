@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"go-radar/internal/config"
+	"go-radar/internal/insider"
 	"go-radar/internal/model"
 
 	"gorm.io/driver/sqlite"
@@ -37,6 +38,14 @@ func Open(settings *config.Settings) (*gorm.DB, error) {
 			&model.WatchlistItem{},
 			&model.ScannerRun{},
 			&model.AppSetting{},
+			&insider.Wallet{},
+			&insider.TokenAccount{},
+			&insider.Transaction{},
+			&insider.PriceRecord{},
+			&insider.AlertRule{},
+			&insider.AlertHistory{},
+			&insider.WalletSnapshot{},
+			&insider.NotificationChannel{},
 		} {
 			if !db.Migrator().HasTable(item) {
 				missingModels = append(missingModels, item)

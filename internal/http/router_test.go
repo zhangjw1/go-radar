@@ -36,10 +36,10 @@ func TestHealthReturnsDatabaseStatus(t *testing.T) {
 	}
 }
 
-func TestSignalsEndpointFiltersAndLimits(t *testing.T) {
+func TestSignalsEndpointFiltersAndPaginates(t *testing.T) {
 	router := testRouter(t)
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/signals?source=s5&limit=1", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/signals?source=s5&page=2&pageSize=1", nil)
 
 	router.ServeHTTP(recorder, request)
 
@@ -47,7 +47,10 @@ func TestSignalsEndpointFiltersAndLimits(t *testing.T) {
 		t.Fatalf("status mismatch: got %d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var payload struct {
-		Items []model.SignalEvent `json:"items"`
+		Items    []model.SignalEvent `json:"items"`
+		Total    int64               `json:"total"`
+		Current  int                 `json:"current"`
+		PageSize int                 `json:"pageSize"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -55,8 +58,17 @@ func TestSignalsEndpointFiltersAndLimits(t *testing.T) {
 	if len(payload.Items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(payload.Items))
 	}
+	if payload.Total != 2 {
+		t.Fatalf("expected total=2, got %d", payload.Total)
+	}
+	if payload.Current != 2 || payload.PageSize != 1 {
+		t.Fatalf("unexpected pagination: current=%d pageSize=%d", payload.Current, payload.PageSize)
+	}
 	if payload.Items[0].Source != "s5" {
 		t.Fatalf("expected s5 signal, got %q", payload.Items[0].Source)
+	}
+	if payload.Items[0].Symbol != "BBB" {
+		t.Fatalf("expected second page signal BBB, got %q", payload.Items[0].Symbol)
 	}
 }
 
@@ -170,6 +182,21 @@ func testRouter(t *testing.T) *gin.Engine {
 		CreatedAt:  now,
 	}).Error; err != nil {
 		t.Fatalf("seed signal: %v", err)
+	}
+	if err := db.Create(&model.SignalEvent{
+		TokenID:    &token.ID,
+		Source:     "s5",
+		Chain:      "eth",
+		Address:    "0xdef",
+		Symbol:     "BBB",
+		SignalType: "momentum",
+		Priority:   "low",
+		Score:      12,
+		Reason:     "test second page",
+		DedupeKey:  "s5|eth|0xdef|momentum|bucket",
+		CreatedAt:  time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano),
+	}).Error; err != nil {
+		t.Fatalf("seed second signal: %v", err)
 	}
 	if err := db.Create(&model.ScannerRun{
 		Scanner:       "s5",

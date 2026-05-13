@@ -1292,6 +1292,20 @@ func settingInt(db *gorm.DB, key string, envKey string, fallback int) int {
 	return envInt(envKey, fallback)
 }
 
+func settingString(db *gorm.DB, key string, envKey string, fallback string) string {
+	var row model.AppSetting
+	if db != nil && db.Where("key = ?", key).First(&row).Error == nil {
+		var value string
+		if json.Unmarshal([]byte(row.ValueJSON), &value) == nil && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv(envKey)); raw != "" {
+		return raw
+	}
+	return fallback
+}
+
 // round2 将浮点数四舍五入到两位小数。
 func round2(value float64) float64 {
 	return float64(int(value*100+0.5)) / 100
