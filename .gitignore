@@ -1,4 +1,5 @@
 .env
+.gocache/
 radar.db
 radar.db-*
 node_modules/
