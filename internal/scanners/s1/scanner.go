@@ -61,39 +61,39 @@ type coinGeckoData struct {
 // 它对应 Python 版 projects 表和 pushes 表的合并形态：项目资料、评级结果、
 // 上线时间、已推送阶段都放在这里，避免每轮重复推送。
 type alphaProject struct {
-	ID                string            `json:"id"`
-	Symbol            string            `json:"symbol"`
-	Name              string            `json:"name"`
-	LaunchTime        string            `json:"launch_time"`
-	Source            string            `json:"source"`
-	RawText           string            `json:"raw_text"`
-	Tier              string            `json:"tier"`
-	TierReason        string            `json:"tier_reason"`
-	Narrative         string            `json:"narrative"`
-	NarrativeDesc     string            `json:"narrative_desc"`
-	VCs               []string          `json:"vcs"`
-	IsDarling         bool              `json:"is_darling"`
-	OpenPrice         float64           `json:"open_price"`
-	TotalSupply       float64           `json:"total_supply"`
-	CirculatingSupply float64           `json:"circulating_supply"`
-	FDV               float64           `json:"fdv"`
-	CirculatingMCap   float64           `json:"circulating_mcap"`
-	Chain             string            `json:"chain"`
-	Contract          string            `json:"contract"`
-	Excluded          bool              `json:"excluded"`
-	ExcludeReason     string            `json:"exclude_reason"`
-	DiscoveredAt      string            `json:"discovered_at"`
-	UpdatedAt         string            `json:"updated_at"`
-	Pushes            map[string]string `json:"pushes"`
+	ID                string            `json:"id"`                 // ID 是按 symbol + 日期生成的稳定项目 ID。
+	Symbol            string            `json:"symbol"`             // Symbol 是公告中提取的代币符号。
+	Name              string            `json:"name"`               // Name 是公告标题中提取的项目名，可能为空。
+	LaunchTime        string            `json:"launch_time"`        // LaunchTime 是公告发布时间/上线时间，供倒计时和上线后跟踪使用。
+	Source            string            `json:"source"`             // Source 是项目发现来源，当前主要是 binance_announcement。
+	RawText           string            `json:"raw_text"`           // RawText 是公告原始标题，用于规则过滤和 AI/规则抽取。
+	Tier              string            `json:"tier"`               // Tier 是 S/A/B/C/PENDING/EXCLUDED/ERROR 分层结果。
+	TierReason        string            `json:"tier_reason"`        // TierReason 是分层原因。
+	Narrative         string            `json:"narrative"`          // Narrative 是项目主叙事，例如 ai_agent、defi、meme。
+	NarrativeDesc     string            `json:"narrative_desc"`     // NarrativeDesc 是 AI/规则生成的一句话项目描述。
+	VCs               []string          `json:"vcs"`                // VCs 是识别出的投资机构列表。
+	IsDarling         bool              `json:"is_darling"`         // IsDarling 表示是否命中 YZi/Binance Labs 等币安亲儿子信号。
+	OpenPrice         float64           `json:"open_price"`         // OpenPrice 是聚合时记录的基准价格，用于上线后涨跌幅计算。
+	TotalSupply       float64           `json:"total_supply"`       // TotalSupply 是 CoinGecko 给出的总供应量。
+	CirculatingSupply float64           `json:"circulating_supply"` // CirculatingSupply 是 CoinGecko 给出的流通供应量。
+	FDV               float64           `json:"fdv"`                // FDV 是完全稀释估值。
+	CirculatingMCap   float64           `json:"circulating_mcap"`   // CirculatingMCap 是流通市值。
+	Chain             string            `json:"chain"`              // Chain 是映射后的链标识。
+	Contract          string            `json:"contract"`           // Contract 是合约地址；缺失时使用内部 symbol_date 地址。
+	Excluded          bool              `json:"excluded"`           // Excluded 表示该项目已被排除，不再推送和跟踪。
+	ExcludeReason     string            `json:"exclude_reason"`     // ExcludeReason 是排除原因，例如 already_tge、meme_only。
+	DiscoveredAt      string            `json:"discovered_at"`      // DiscoveredAt 是首次发现时间。
+	UpdatedAt         string            `json:"updated_at"`         // UpdatedAt 是最近状态更新时间。
+	Pushes            map[string]string `json:"pushes"`             // Pushes 记录各阶段是否已推送，key 为 discovery/t_minus_30m 等。
 }
 
 // narrativeExtract 是 LLM 或规则降级后得到的项目研究结论。
 type narrativeExtract struct {
-	Narrative     string   `json:"narrative"`
-	NarrativeDesc string   `json:"narrative_desc"`
-	VCs           []string `json:"vcs"`
-	IsDarling     bool     `json:"is_darling"`
-	ExcludeReason string   `json:"exclude_reason"`
+	Narrative     string   `json:"narrative"`      // Narrative 是项目主叙事分类。
+	NarrativeDesc string   `json:"narrative_desc"` // NarrativeDesc 是简短中文描述。
+	VCs           []string `json:"vcs"`            // VCs 是从公告和 CoinGecko 分类中提取的机构。
+	IsDarling     bool     `json:"is_darling"`     // IsDarling 表示是否属于币安重点扶持信号。
+	ExcludeReason string   `json:"exclude_reason"` // ExcludeReason 非空时表示应排除该项目。
 }
 
 // NewScanner 创建 S1 扫描器实例。
@@ -483,29 +483,33 @@ func (s *Scanner) extractNarrative(ctx context.Context, rawText string, symbol s
 		VCs:           vcs,
 		IsDarling:     isDarling,
 	}
-	apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
 		return fallback, ""
 	}
 
 	payload := map[string]any{
-		"model":       firstNonEmpty(os.Getenv("ANTHROPIC_MODEL"), "claude-sonnet-4-20250514"),
-		"max_tokens":  800,
+		"model":       firstNonEmpty(os.Getenv("OPENAI_MODEL"), "gpt-4.1-mini"),
 		"temperature": 0,
-		"system":      "You are a crypto research analyst. Return JSON only.",
-		"messages": []map[string]string{{
-			"role":    "user",
-			"content": llmPrompt(rawText, symbol, name, cg),
-		}},
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "You are a crypto research analyst. Return JSON only.",
+			},
+			{
+				"role":    "user",
+				"content": llmPrompt(rawText, symbol, name, cg),
+			},
+		},
+		"response_format": map[string]string{"type": "json_object"},
 	}
 	encoded, _ := json.Marshal(payload)
-	baseURL := firstNonEmpty(os.Getenv("ANTHROPIC_BASE_URL"), "https://api.anthropic.com")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/messages", bytes.NewReader(encoded))
+	baseURL := firstNonEmpty(os.Getenv("OPENAI_BASE_URL"), "https://api.openai.com/v1")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(encoded))
 	if err != nil {
 		return fallback, fmt.Sprintf("llm_request_failed:%s:%v", symbol, err)
 	}
-	request.Header.Set("x-api-key", apiKey)
-	request.Header.Set("anthropic-version", "2023-06-01")
+	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("content-type", "application/json")
 	response, err := s.client.Do(request)
 	if err != nil {
@@ -515,17 +519,14 @@ func (s *Scanner) extractNarrative(ctx context.Context, rawText string, symbol s
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fallback, fmt.Sprintf("llm_call_failed:%s:%s", symbol, response.Status)
 	}
-	var decoded anthropicResponse
+	var decoded openAIChatResponse
 	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
 		return fallback, fmt.Sprintf("llm_decode_failed:%s:%v", symbol, err)
 	}
-	text := ""
-	for _, block := range decoded.Content {
-		if block.Type == "text" {
-			text = strings.TrimSpace(block.Text)
-			break
-		}
+	if len(decoded.Choices) == 0 {
+		return fallback, fmt.Sprintf("llm_empty_response:%s", symbol)
 	}
+	text := strings.TrimSpace(decoded.Choices[0].Message.Content)
 	text = strings.TrimPrefix(text, "```json")
 	text = strings.TrimPrefix(text, "```")
 	text = strings.TrimSuffix(text, "```")
@@ -756,11 +757,12 @@ type coinGeckoDetailsResponse struct {
 	} `json:"market_data"`
 }
 
-type anthropicResponse struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+type openAIChatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
 }
 
 func firstN(values []string, count int) []string {

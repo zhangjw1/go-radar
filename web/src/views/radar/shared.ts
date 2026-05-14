@@ -42,8 +42,71 @@ export function chainLabel(chain: string) {
   return chainLabels[chain] || chain;
 }
 
+type SignalLike = {
+  signal_type: string;
+  reason?: string;
+  raw_json?: string;
+};
+
 export function signalTypeLabel(signalType: string) {
   return signalTypeLabels[signalType] || signalType;
+}
+
+function parseRaw(rawJson?: string) {
+  if (!rawJson) return {};
+  try {
+    return JSON.parse(rawJson) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function isNegativeRateText(value: string) {
+  return value.trim().startsWith('-');
+}
+
+function fundingDirectionLabel(record: SignalLike) {
+  const raw = parseRaw(record.raw_json);
+  const position = String(raw.position_direction || '');
+  const flip = String(raw.funding_flip || '');
+  const label = String(raw.funding_flip_label || '');
+  if (position === '多转空' || position === '空转多') return position;
+  if (label === '正转负') return '多转空';
+  if (label === '负转正') return '空转多';
+  if (flip === 'positive_to_negative') return '多转空';
+  if (flip === 'negative_to_positive') return '空转多';
+
+  const reason = record.reason || '';
+  if (reason.includes('多转空') || reason.includes('正转负')) return '多转空';
+  if (reason.includes('空转多') || reason.includes('负转正')) return '空转多';
+
+  const fromTo = reason.match(/from ([+-]?[0-9.]+)%? to ([+-]?[0-9.]+)%?/i);
+  if (fromTo) {
+    const previousNegative = isNegativeRateText(fromTo[1]);
+    const currentNegative = isNegativeRateText(fromTo[2]);
+    if (!previousNegative && currentNegative) return '多转空';
+    if (previousNegative && !currentNegative) return '空转多';
+  }
+
+  const cnFromTo = reason.match(
+    /([+-]?[0-9.]+)%?\s*(?:转为|翻到|翻至)\s*([+-]?[0-9.]+)%?/
+  );
+  if (cnFromTo) {
+    const previousNegative = isNegativeRateText(cnFromTo[1]);
+    const currentNegative = isNegativeRateText(cnFromTo[2]);
+    if (!previousNegative && currentNegative) return '多转空';
+    if (previousNegative && !currentNegative) return '空转多';
+  }
+
+  return '';
+}
+
+export function signalTypeLabelForRecord(record: SignalLike) {
+  if (record.signal_type === 'funding_flip_oi_rising') {
+    const direction = fundingDirectionLabel(record);
+    return direction ? `费率${direction} + OI 抬升` : '费率翻转 + OI 抬升';
+  }
+  return signalTypeLabel(record.signal_type);
 }
 
 export function priorityColor(priority: string) {

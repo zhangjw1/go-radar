@@ -40,7 +40,7 @@
                   <span v-if="!tags.length">-</span>
                 </a-space>
               </a-descriptions-item>
-              <a-descriptions-item label="地址">
+              <a-descriptions-item :label="identifierLabel">
                 <a-typography-paragraph copyable>
                   {{ token?.address || '-' }}
                 </a-typography-paragraph>
@@ -59,22 +59,24 @@
           >
             <a-grid :cols="24" :col-gap="16" :row-gap="16">
               <a-grid-item :span="{ xs: 24, sm: 12, lg: 6 }">
-                <a-statistic title="相关信号" :value="signals.length" />
-              </a-grid-item>
-              <a-grid-item :span="{ xs: 24, sm: 12, lg: 6 }">
-                <a-statistic title="快照数量" :value="snapshots.length" />
+                <a-statistic title="相关信号" :value="visibleSignals.length" />
               </a-grid-item>
               <a-grid-item :span="{ xs: 24, sm: 12, lg: 6 }">
                 <a-statistic
-                  title="最高分数"
-                  :value="highestScore ? formatScore(highestScore) : '-'"
+                  title="快照数量"
+                  :value="visibleSnapshots.length"
                 />
               </a-grid-item>
               <a-grid-item :span="{ xs: 24, sm: 12, lg: 6 }">
-                <a-statistic
-                  title="观察状态"
-                  :value="watchItem?.status || '未加入'"
-                />
+                <a-statistic title="最高分数" :value="highestScore" />
+              </a-grid-item>
+              <a-grid-item :span="{ xs: 24, sm: 12, lg: 6 }">
+                <div class="status-summary">
+                  <div class="status-summary__label">观察状态</div>
+                  <div class="status-summary__value">
+                    {{ watchItem?.status || '未加入' }}
+                  </div>
+                </div>
               </a-grid-item>
             </a-grid>
 
@@ -103,7 +105,7 @@
         <a-tabs default-active-key="signals" type="rounded">
           <a-tab-pane key="signals" title="相关信号">
             <a-table
-              :data="signals"
+              :data="visibleSignals"
               :loading="loading"
               row-key="id"
               :pagination="{ pageSize: 10 }"
@@ -118,7 +120,7 @@
                 <a-table-column title="来源" data-index="source" />
                 <a-table-column title="信号类型">
                   <template #cell="{ record }">
-                    {{ signalTypeLabel(record.signal_type) }}
+                    {{ signalTypeLabelForRecord(record) }}
                   </template>
                 </a-table-column>
                 <a-table-column title="优先级" data-index="priority">
@@ -143,8 +145,21 @@
           </a-tab-pane>
 
           <a-tab-pane key="snapshots" title="快照">
+            <a-tabs
+              v-if="snapshotSources.length > 1"
+              v-model:active-key="activeSnapshotSource"
+              type="rounded"
+              size="small"
+              class="source-tabs"
+            >
+              <a-tab-pane
+                v-for="source in snapshotSources"
+                :key="source"
+                :title="sourceTabTitle(source)"
+              />
+            </a-tabs>
             <a-table
-              :data="snapshots"
+              :data="visibleSnapshots"
               :loading="loading"
               row-key="id"
               :pagination="{ pageSize: 10 }"
@@ -156,13 +171,87 @@
                     {{ formatTime(record.created_at) }}
                   </template>
                 </a-table-column>
-                <a-table-column title="来源" data-index="source" />
-                <a-table-column title="价格" data-index="price" />
-                <a-table-column title="市值" data-index="mc" />
-                <a-table-column title="流动性" data-index="liq" />
-                <a-table-column title="成交量" data-index="volume" />
-                <a-table-column title="资金费率" data-index="funding_pct" />
-                <a-table-column title="OI" data-index="oi_usd" />
+                <a-table-column
+                  v-if="showSnapshotSourceColumn"
+                  title="来源"
+                  data-index="source"
+                />
+                <a-table-column
+                  v-if="showSnapshotPriceColumn"
+                  title="价格"
+                  data-index="price"
+                >
+                  <template #cell="{ record }">
+                    {{ formatPrice(record.price) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotMarketCapColumn"
+                  title="市值"
+                  data-index="mc"
+                >
+                  <template #cell="{ record }">
+                    {{ formatCompactUnit(record.mc) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotHoldersColumn"
+                  title="持仓人数"
+                  data-index="holders"
+                >
+                  <template #cell="{ record }">
+                    {{ formatOptionalNumber(record.holders) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotLiquidityColumn"
+                  title="流动性"
+                  data-index="liq"
+                >
+                  <template #cell="{ record }">
+                    {{ formatCompactUnit(record.liq) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotVolumeColumn"
+                  title="成交量"
+                  data-index="volume"
+                >
+                  <template #cell="{ record }">
+                    {{ formatCompactUnit(record.volume) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotFundingColumn"
+                  title="资金费率"
+                  data-index="funding_pct"
+                >
+                  <template #cell="{ record }">
+                    <a-tooltip :content="fundingTooltip(record)">
+                      <span>{{ formatFunding(record) }}</span>
+                    </a-tooltip>
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotOIColumn"
+                  title="OI"
+                  data-index="oi_usd"
+                >
+                  <template #cell="{ record }">
+                    {{ formatCompactUnit(record.oi_usd) }}
+                  </template>
+                </a-table-column>
+                <a-table-column
+                  v-if="showSnapshotOIDeltaColumn"
+                  title="6小时 OI 对比"
+                  data-index="oi_d6h"
+                >
+                  <template #cell="{ record }">
+                    <a-tooltip :content="oiCompareTooltip(record)">
+                      <span>{{ formatOIDelta(record) }}</span>
+                    </a-tooltip>
+                  </template>
+                </a-table-column>
               </template>
             </a-table>
           </a-tab-pane>
@@ -173,7 +262,7 @@
 </template>
 
 <script lang="ts" setup>
-  import { computed, onMounted, ref } from 'vue';
+  import { computed, onMounted, ref, watch } from 'vue';
   import { useRoute, useRouter } from 'vue-router';
   import { Message } from '@arco-design/web-vue';
   import {
@@ -189,7 +278,7 @@
     formatTime,
     priorityColor,
     priorityLabel,
-    signalTypeLabel,
+    signalTypeLabelForRecord,
     summarizeReason,
   } from '../shared';
 
@@ -200,9 +289,75 @@
   const signals = ref<SignalEvent[]>([]);
   const snapshots = ref<TokenSnapshot[]>([]);
   const watchItem = ref<WatchlistItem | null>(null);
+  const activeSnapshotSource = ref('all');
+
+  const routeSource = computed(() => String(route.query.source || ''));
+
+  const snapshotSources = computed(() => {
+    const sources = Array.from(
+      new Set(snapshots.value.map((item) => item.source).filter(Boolean))
+    );
+    return sources.length > 1 ? ['all', ...sources] : sources;
+  });
+
+  const sourceTabTitle = (source: string) =>
+    source === 'all' ? '全部' : source.toUpperCase();
+
+  const visibleSnapshots = computed(() => {
+    if (activeSnapshotSource.value && activeSnapshotSource.value !== 'all') {
+      return snapshots.value.filter(
+        (item) => item.source === activeSnapshotSource.value
+      );
+    }
+    return snapshots.value;
+  });
+
+  const visibleSignals = computed(() => {
+    if (routeSource.value) {
+      return signals.value.filter((item) => item.source === routeSource.value);
+    }
+    return signals.value;
+  });
+
+  const hasSnapshotValue = (getter: (item: TokenSnapshot) => unknown) =>
+    visibleSnapshots.value.some((item) => {
+      const value = getter(item);
+      return value !== null && value !== undefined && value !== '';
+    });
+
+  const showSnapshotSourceColumn = computed(() => {
+    const sources = new Set(
+      visibleSnapshots.value.map((item) => item.source).filter(Boolean)
+    );
+    return sources.size > 1;
+  });
+  const showSnapshotPriceColumn = computed(() =>
+    hasSnapshotValue((item) => item.price)
+  );
+  const showSnapshotMarketCapColumn = computed(() =>
+    hasSnapshotValue((item) => item.mc)
+  );
+  const showSnapshotHoldersColumn = computed(() =>
+    hasSnapshotValue((item) => item.holders)
+  );
+  const showSnapshotLiquidityColumn = computed(() =>
+    hasSnapshotValue((item) => item.liq)
+  );
+  const showSnapshotVolumeColumn = computed(() =>
+    hasSnapshotValue((item) => item.volume)
+  );
+  const showSnapshotOIColumn = computed(() =>
+    hasSnapshotValue((item) => item.oi_usd)
+  );
+  const showSnapshotOIDeltaColumn = computed(() =>
+    hasSnapshotValue((item) => item.oi_d6h)
+  );
 
   const tokenTitle = computed(
     () => token.value?.name || token.value?.symbol || '标的详情'
+  );
+  const identifierLabel = computed(() =>
+    token.value?.chain === 'binance_perp' ? '合约交易对' : '地址'
   );
 
   const tags = computed(() => {
@@ -230,16 +385,137 @@
   });
 
   const highestScore = computed(() => {
-    if (!signals.value.length) return 0;
-    return Math.max(...signals.value.map((item) => item.score || 0));
+    if (!visibleSignals.value.length) return 0;
+    return Math.max(...visibleSignals.value.map((item) => item.score || 0));
   });
+
+  const toFiniteNumber = (value?: number | null) => {
+    if (value === null || value === undefined) return '-';
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) return '-';
+    return numeric;
+  };
+
+  const formatPrice = (value?: number | null) => {
+    const numeric = toFiniteNumber(value);
+    if (numeric === '-') return '-';
+    return numeric.toLocaleString('zh-CN', {
+      maximumFractionDigits: numeric >= 1 ? 6 : 10,
+    });
+  };
+
+  const formatCompactUnit = (value?: number | null) => {
+    const numeric = toFiniteNumber(value);
+    if (numeric === '-') return '-';
+    const abs = Math.abs(numeric);
+    if (abs >= 100000000) {
+      return `${(numeric / 100000000).toLocaleString('zh-CN', {
+        maximumFractionDigits: 2,
+      })} 亿`;
+    }
+    if (abs >= 10000) {
+      return `${(numeric / 10000).toLocaleString('zh-CN', {
+        maximumFractionDigits: 2,
+      })} 万`;
+    }
+    return numeric.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+  };
+
+  const formatOptionalNumber = (value?: number | null) => {
+    const numeric = toFiniteNumber(value);
+    if (numeric === '-') return '-';
+    return numeric.toLocaleString('zh-CN');
+  };
+
+  const formatPercent = (value?: number | null) => {
+    const numeric = toFiniteNumber(value);
+    if (numeric === '-') return '-';
+    return `${numeric.toLocaleString('zh-CN', {
+      maximumFractionDigits: 4,
+    })}%`;
+  };
+
+  const parseSnapshotRaw = (rawJson?: string) => {
+    if (!rawJson) return {};
+    try {
+      return JSON.parse(rawJson) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  };
+
+  const hasFundingValue = (record: TokenSnapshot) => {
+    const raw = parseSnapshotRaw(record.raw_json);
+    if (raw.has_funding === true) return true;
+    if (raw.has_funding === false) return false;
+    if (record.funding_pct === null || record.funding_pct === undefined) {
+      return false;
+    }
+    return 'unknown';
+  };
+
+  const showSnapshotFundingColumn = computed(() =>
+    visibleSnapshots.value.some((item) => hasFundingValue(item))
+  );
+
+  const formatFunding = (record: TokenSnapshot) => {
+    const hasFunding = hasFundingValue(record);
+    if (!hasFunding) return '-';
+    return formatPercent(record.funding_pct);
+  };
+
+  const fundingTooltip = (record: TokenSnapshot) => {
+    const hasFunding = hasFundingValue(record);
+    if (hasFunding === true) return '已获取 Binance 资金费率';
+    if (hasFunding === false) return '本轮未获取到资金费率';
+    return '历史数据未记录是否获取到资金费率';
+  };
+
+  const formatOIDelta = (record: TokenSnapshot) => {
+    const numeric = toFiniteNumber(record.oi_d6h);
+    if (numeric === '-') return '-';
+    const sign = numeric > 0 ? '+' : '';
+    return `${sign}${numeric.toLocaleString('zh-CN', {
+      maximumFractionDigits: 1,
+    })}%`;
+  };
+
+  const oiCompareTooltip = (record: TokenSnapshot) => {
+    const raw = parseSnapshotRaw(record.raw_json);
+    const history = Array.isArray(raw.oi_history_usd)
+      ? raw.oi_history_usd
+          .map((item) => Number(item))
+          .filter((item) => !Number.isNaN(item))
+      : [];
+    const previous = toFiniteNumber(raw.oi_prev6h_usd as number | null);
+    const current = toFiniteNumber(record.oi_usd);
+    const points = toFiniteNumber(raw.oi_history_points as number | null);
+    const delta = formatOIDelta(record);
+    if (history.length >= 2 && delta !== '-') {
+      return `Binance OI序列：${history
+        .map((item) => formatCompactUnit(item))
+        .join(' -> ')}，变化 ${delta}`;
+    }
+    if (previous === '-' || current === '-' || delta === '-') {
+      return '当前 OI；旧快照可能没有记录 Binance 小时级窗口基准值';
+    }
+    const pointText = points === '-' ? '' : `，样本点 ${points}`;
+    return `当前 ${formatCompactUnit(current)}，窗口基准 ${formatCompactUnit(
+      previous
+    )}，变化 ${delta}${pointText}`;
+  };
 
   const loadData = async () => {
     loading.value = true;
     try {
       const chain = String(route.params.chain || '');
       const address = String(route.params.address || '');
-      const { data } = await queryToken(chain, address);
+      const source = routeSource.value;
+      const { data } = await queryToken(
+        chain,
+        address,
+        source ? { source } : undefined
+      );
       token.value = data.token;
       signals.value = data.signals || [];
       snapshots.value = data.snapshots || [];
@@ -250,6 +526,20 @@
       loading.value = false;
     }
   };
+
+  watch(
+    [routeSource, snapshotSources],
+    ([source, sources]) => {
+      if (source && sources.includes(source)) {
+        activeSnapshotSource.value = source;
+        return;
+      }
+      if (!sources.includes(activeSnapshotSource.value)) {
+        activeSnapshotSource.value = sources[0] || 'all';
+      }
+    },
+    { immediate: true }
+  );
 
   onMounted(loadData);
 </script>
@@ -274,5 +564,26 @@
 
   .social-links {
     margin-top: 16px;
+  }
+
+  .source-tabs {
+    margin-bottom: 12px;
+  }
+
+  .status-summary {
+    padding-top: 2px;
+  }
+
+  .status-summary__label {
+    color: var(--color-text-2);
+    font-size: 14px;
+    line-height: 22px;
+  }
+
+  .status-summary__value {
+    margin-top: 6px;
+    color: var(--color-text-1);
+    font-size: 30px;
+    line-height: 38px;
   }
 </style>

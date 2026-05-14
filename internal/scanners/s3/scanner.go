@@ -30,20 +30,26 @@ type Scanner struct {
 //
 // 业务上它把多个外部接口的指标压缩成统一输入，供逐币信号和整轮报告共同使用。
 type marketData struct {
-	Symbol     string  // Symbol 是 Binance 合约交易对，例如 BTCUSDT。
-	Coin       string  // Coin 是去掉 USDT 后的币种符号。
-	Price      float64 // Price 是最新价格。
-	PxChg      float64 // PxChg 是 24 小时价格涨跌幅百分比。
-	Vol        float64 // Vol 是 24 小时报价币成交额。
-	FundingPct float64 // FundingPct 是当前资金费率百分比。
-	OIUSD      float64 // OIUSD 是当前未平仓合约美元价值。
-	OID1H      float64 // OID1H 是 1 小时 OI 变化百分比。
-	OID6H      float64 // OID6H 是 6 小时 OI 变化百分比。
-	EstMCap    float64 // EstMCap 是市值或根据成交额/OI 估算出的市值。
-	Heat       float64 // Heat 是外部热度和成交量异动累加出的热度分。
-	InCG       bool    // InCG 表示是否出现在 CoinGecko trending。
-	InSquare   bool    // InSquare 表示是否出现在 Binance Square 热榜。
-	VolSurge   bool    // VolSurge 表示当前成交额相对历史是否放大。
+	Symbol          string    // Symbol 是 Binance 合约交易对，例如 BTCUSDT。
+	Coin            string    // Coin 是去掉 USDT 后的币种符号。
+	Price           float64   // Price 是最新价格。
+	PxChg           float64   // PxChg 是 24 小时价格涨跌幅百分比。
+	Vol             float64   // Vol 是 24 小时报价币成交额。
+	FundingPct      float64   // FundingPct 是当前资金费率百分比。
+	HasFunding      bool      // HasFunding 表示本轮是否真实拿到了资金费率。
+	ProjectName     string    // ProjectName 是 Binance 或外部资料返回的项目全称。
+	OIUSD           float64   // OIUSD 是当前未平仓合约美元价值。
+	OID1H           float64   // OID1H 是 1 小时 OI 变化百分比。
+	OID6H           float64   // OID6H 是 6 小时 OI 变化百分比。
+	OIPrev1H        float64   // OIPrev1H 是 Binance OI 序列中的上一小时基准。
+	OIPrev6H        float64   // OIPrev6H 是 Binance OI 序列中的六小时基准。
+	OIHistoryPoints float64   // OIHistoryPoints 是本轮 OI 历史点数量。
+	OIHistory       []float64 // OIHistory 是 Binance 返回的小时级 OI 序列。
+	EstMCap         float64   // EstMCap 是市值或根据成交额/OI 估算出的市值。
+	Heat            float64   // Heat 是外部热度和成交量异动累加出的热度分。
+	InCG            bool      // InCG 表示是否出现在 CoinGecko trending。
+	InSquare        bool      // InSquare 表示是否出现在 Binance Square 热榜。
+	VolSurge        bool      // VolSurge 表示当前成交额相对历史是否放大。
 }
 
 // heatHistoryEntry 记录某个币第一次进入热度榜的时间。
@@ -93,12 +99,12 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	}
 	fundingMap := make(map[string]float64)
 	for _, item := range premiums {
-		if strings.HasSuffix(item.Symbol, "USDT") {
+		if strings.HasSuffix(item.Symbol, "USDT") && item.LastFundingRate != "" {
 			fundingMap[item.Symbol] = scanners.ParseFloat(item.LastFundingRate) * 100
 		}
 	}
 
-	marketCaps, warnings := s.fetchMarketCaps(ctx)
+	binanceData, warnings := s.fetchMarketData(ctx)
 	result.Warnings = append(result.Warnings, warnings...)
 	cgHeat, warnings := s.fetchCGTrending(ctx)
 	result.Warnings = append(result.Warnings, warnings...)
@@ -175,14 +181,16 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	}
 
 	oiMap := make(map[string]map[string]float64)
+	oiHistoryMap := make(map[string][]float64)
 	for symbol := range scanSymbols {
-		oi, err := s.fetchOI(ctx, symbol)
+		oi, history, err := s.fetchOI(ctx, symbol)
 		if err != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("oi_failed:%s:%v", symbol, err))
 			continue
 		}
 		if oi != nil {
 			oiMap[symbol] = oi
+			oiHistoryMap[symbol] = history
 		}
 	}
 
@@ -191,7 +199,8 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 		coin := strings.TrimSuffix(symbol, "USDT")
 		oi := oiMap[symbol]
 		oiUSD := oi["oi_usd"]
-		estMCap, ok := marketCaps[coin]
+		fundingPct, hasFunding := fundingMap[symbol]
+		estMCap, ok := binanceData.Caps[coin]
 		if !ok {
 			vol := scanners.ParseFloat(ticker.QuoteVolume)
 			if oiUSD > 0 {
@@ -201,20 +210,26 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			}
 		}
 		coinData[symbol] = marketData{
-			Symbol:     symbol,
-			Coin:       coin,
-			Price:      scanners.ParseFloat(ticker.LastPrice),
-			PxChg:      scanners.ParseFloat(ticker.PriceChangePercent),
-			Vol:        scanners.ParseFloat(ticker.QuoteVolume),
-			FundingPct: fundingMap[symbol],
-			OIUSD:      oiUSD,
-			OID1H:      oi["d1h"],
-			OID6H:      oi["d6h"],
-			EstMCap:    estMCap,
-			Heat:       heatMap[coin],
-			InCG:       cgTrending[coin],
-			InSquare:   squareTrending[coin],
-			VolSurge:   volumeSurgeCoins[coin],
+			Symbol:          symbol,
+			Coin:            coin,
+			Price:           scanners.ParseFloat(ticker.LastPrice),
+			PxChg:           scanners.ParseFloat(ticker.PriceChangePercent),
+			Vol:             scanners.ParseFloat(ticker.QuoteVolume),
+			FundingPct:      fundingPct,
+			HasFunding:      hasFunding,
+			ProjectName:     binanceData.DisplayName(coin),
+			OIUSD:           oiUSD,
+			OID1H:           oi["d1h"],
+			OID6H:           oi["d6h"],
+			OIPrev1H:        oi["prev1h"],
+			OIPrev6H:        oi["prev6h"],
+			OIHistoryPoints: oi["points"],
+			OIHistory:       oiHistoryMap[symbol],
+			EstMCap:         estMCap,
+			Heat:            heatMap[coin],
+			InCG:            cgTrending[coin],
+			InSquare:        squareTrending[coin],
+			VolSurge:        volumeSurgeCoins[coin],
 		}
 	}
 
@@ -227,34 +242,38 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	minOIDelta := scanners.EnvFloat("S3_MIN_OI_DELTA_PCT", 3)
 	interestingCount := 0
 	for symbol, data := range coinData {
-		if !(data.Heat > 0 || math.Abs(data.OID6H) >= minOIDelta || data.FundingPct < -0.01) {
+		if !(data.Heat > 0 || math.Abs(data.OID6H) >= minOIDelta || (data.HasFunding && data.FundingPct < -0.01)) {
 			continue
 		}
 		interestingCount++
 		raw := rawForMarketData(symbol, data)
+		var fundingPct *float64
+		if data.HasFunding {
+			fundingPct = &data.FundingPct
+		}
 		result.Snapshots = append(result.Snapshots, scanners.SnapshotPayload{
 			Source:     "s3",
 			Chain:      "binance_perp",
 			Address:    strings.ToLower(symbol),
 			Symbol:     data.Coin,
-			Name:       data.Coin,
+			Name:       data.ProjectName,
 			Price:      &data.Price,
 			MC:         &data.EstMCap,
 			Volume:     &data.Vol,
-			FundingPct: &data.FundingPct,
+			FundingPct: fundingPct,
 			OIUSD:      &data.OIUSD,
 			OID6H:      &data.OID6H,
 			Raw:        raw,
 		})
 		tags := tagsForMarketData(data)
-		for _, signalType := range BuildSignalTypes(data.Heat, data.OID6H, data.FundingPct, minOIDelta) {
+		for _, signalType := range BuildSignalTypes(data.Heat, data.OID6H, data.FundingPct, data.HasFunding, minOIDelta) {
 			priority, score, reason := scoreSignal(signalType, data)
 			result.Signals = append(result.Signals, scanners.SignalPayload{
 				Source:     "s3",
 				Chain:      "binance_perp",
 				Address:    strings.ToLower(symbol),
 				Symbol:     data.Coin,
-				Name:       data.Coin,
+				Name:       data.ProjectName,
 				SignalType: signalType,
 				Priority:   priority,
 				Score:      math.Round(score*100) / 100,
@@ -265,7 +284,7 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 					Chain:          "binance_perp",
 					Address:        strings.ToLower(symbol),
 					Symbol:         data.Coin,
-					Name:           data.Coin,
+					Name:           data.ProjectName,
 					NarrativeTheme: strings.ToLower(data.Coin),
 					NarrativeTags:  tags,
 				},
@@ -327,7 +346,7 @@ func (s *Scanner) buildHeatReport(ctx context.Context, coinData map[string]marke
 
 	chase := []chaseEntry{}
 	for symbol, data := range coinData {
-		if data.PxChg <= 3 || data.FundingPct >= -0.005 || data.Vol <= 1_000_000 {
+		if !data.HasFunding || data.PxChg <= 3 || data.FundingPct >= -0.005 || data.Vol <= 1_000_000 {
 			continue
 		}
 		rates, err := s.fetchFundingHistory(ctx, symbol)
@@ -343,7 +362,7 @@ func (s *Scanner) buildHeatReport(ctx context.Context, coinData map[string]marke
 		chase = append(chase, chaseEntry{
 			Data:    data,
 			FRDelta: delta,
-			Trend:   fundingTrend(delta),
+			Trend:   fundingTrend(previous, data.FundingPct, delta),
 			Rates:   lastFundingRates(rates, data.FundingPct),
 		})
 	}
@@ -408,6 +427,10 @@ func scoreSignal(signalType string, data marketData) (string, float64, string) {
 	score := data.Heat
 	reason := "Heat signal"
 	switch signalType {
+	case "heat_plus_oi_negative_funding":
+		priority = "high"
+		score += data.OID6H*2 + math.Abs(data.FundingPct)*600
+		reason = fmt.Sprintf("Heat + OI rising %+0.1f%% + negative funding %+0.3f%%", data.OID6H, data.FundingPct)
 	case "heat_plus_oi":
 		priority = "high"
 		score += data.OID6H * 2
@@ -430,18 +453,25 @@ func scoreSignal(signalType string, data marketData) (string, float64, string) {
 	return priority, score, reason
 }
 
-func (s *Scanner) fetchMarketCaps(ctx context.Context) (map[string]float64, []string) {
+func (s *Scanner) fetchMarketData(ctx context.Context) (binanceMarketData, []string) {
 	var response marketCapsResponse
 	if err := scanners.GetJSON(ctx, s.client, "https://www.binance.com/bapi/composite/v1/public/marketing/symbol/list", nil, &response); err != nil {
-		return map[string]float64{}, []string{fmt.Sprintf("market_caps_failed:%v", err)}
+		return newBinanceMarketData(), []string{fmt.Sprintf("market_data_failed:%v", err)}
 	}
-	marketCaps := make(map[string]float64)
+	marketData := newBinanceMarketData()
 	for _, item := range response.Data {
-		if item.Name != "" && item.MarketCap != nil {
-			marketCaps[strings.ToUpper(item.Name)] = *item.MarketCap
+		symbol := strings.ToUpper(strings.TrimSpace(item.Name))
+		if symbol == "" {
+			continue
+		}
+		if item.MarketCap != nil {
+			marketData.Caps[symbol] = *item.MarketCap
+		}
+		if projectName := firstNonEmpty(item.FullName, item.AssetName, item.DisplayName, item.Title); projectName != "" {
+			marketData.Names[symbol] = projectName
 		}
 	}
-	return marketCaps, nil
+	return marketData, nil
 }
 
 func (s *Scanner) fetchCGTrending(ctx context.Context) (map[string]float64, []string) {
@@ -481,17 +511,21 @@ func (s *Scanner) fetchPreviousVolumes(ctx context.Context, symbol string) ([]fl
 	return previous, nil
 }
 
-func (s *Scanner) fetchOI(ctx context.Context, symbol string) (map[string]float64, error) {
+func (s *Scanner) fetchOI(ctx context.Context, symbol string) (map[string]float64, []float64, error) {
 	params := url.Values{}
 	params.Set("symbol", symbol)
 	params.Set("period", "1h")
-	params.Set("limit", "6")
+	params.Set("limit", "7")
 	var rows []oiHistoryItem
 	if err := scanners.GetJSON(ctx, s.client, "https://fapi.binance.com/futures/data/openInterestHist", params, &rows); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(rows) < 2 {
-		return nil, nil
+		return nil, nil, nil
+	}
+	history := make([]float64, 0, len(rows))
+	for _, row := range rows {
+		history = append(history, scanners.ParseFloat(row.SumOpenInterestValue))
 	}
 	current := scanners.ParseFloat(rows[len(rows)-1].SumOpenInterestValue)
 	prev1h := scanners.ParseFloat(rows[len(rows)-2].SumOpenInterestValue)
@@ -504,7 +538,14 @@ func (s *Scanner) fetchOI(ctx context.Context, symbol string) (map[string]float6
 	if prev6h > 0 {
 		d6h = (current - prev6h) / prev6h * 100
 	}
-	return map[string]float64{"oi_usd": current, "d1h": d1h, "d6h": d6h}, nil
+	return map[string]float64{
+		"oi_usd": current,
+		"d1h":    d1h,
+		"d6h":    d6h,
+		"prev1h": prev1h,
+		"prev6h": prev6h,
+		"points": float64(len(rows)),
+	}, history, nil
 }
 
 func (s *Scanner) fetchFundingHistory(ctx context.Context, symbol string) ([]float64, error) {
@@ -524,20 +565,29 @@ func (s *Scanner) fetchFundingHistory(ctx context.Context, symbol string) ([]flo
 
 func rawForMarketData(symbol string, data marketData) map[string]any {
 	return map[string]any{
-		"symbol":      symbol,
-		"coin":        data.Coin,
-		"price":       data.Price,
-		"px_chg":      data.PxChg,
-		"vol":         data.Vol,
-		"funding_pct": data.FundingPct,
-		"oi_usd":      data.OIUSD,
-		"oi_d1h":      data.OID1H,
-		"oi_d6h":      data.OID6H,
-		"est_mcap":    data.EstMCap,
-		"heat":        data.Heat,
-		"in_cg":       data.InCG,
-		"in_square":   data.InSquare,
-		"vol_surge":   data.VolSurge,
+		"symbol":             symbol,
+		"coin":               data.Coin,
+		"project_name":       data.ProjectName,
+		"market_identifier":  strings.ToLower(symbol),
+		"price":              data.Price,
+		"px_chg":             data.PxChg,
+		"vol":                data.Vol,
+		"funding_pct":        nullableFunding(data),
+		"has_funding":        data.HasFunding,
+		"funding_bias":       fundingBiasForData(data),
+		"funding_bias_label": fundingBiasLabelForData(data),
+		"oi_usd":             data.OIUSD,
+		"oi_d1h":             data.OID1H,
+		"oi_d6h":             data.OID6H,
+		"oi_prev1h_usd":      data.OIPrev1H,
+		"oi_prev6h_usd":      data.OIPrev6H,
+		"oi_history_points":  data.OIHistoryPoints,
+		"oi_history_usd":     data.OIHistory,
+		"est_mcap":           data.EstMCap,
+		"heat":               data.Heat,
+		"in_cg":              data.InCG,
+		"in_square":          data.InSquare,
+		"vol_surge":          data.VolSurge,
 	}
 }
 
@@ -579,7 +629,8 @@ func marketRows(values []marketData, limit int) []map[string]any {
 			"coin":        data.Coin,
 			"mcap":        data.EstMCap,
 			"px_chg":      data.PxChg,
-			"funding_pct": data.FundingPct,
+			"funding_pct": nullableFunding(data),
+			"has_funding": data.HasFunding,
 			"oi_d6h":      data.OID6H,
 			"heat":        data.Heat,
 			"sources":     sourcesForMarketData(data),
@@ -595,13 +646,17 @@ func chaseRows(values []chaseEntry, limit int) []map[string]any {
 	rows := make([]map[string]any, 0, len(values))
 	for _, item := range values {
 		rows = append(rows, map[string]any{
-			"coin":        item.Data.Coin,
-			"mcap":        item.Data.EstMCap,
-			"px_chg":      item.Data.PxChg,
-			"funding_pct": item.Data.FundingPct,
-			"fr_delta":    item.FRDelta,
-			"trend":       item.Trend,
-			"rates":       item.Rates,
+			"coin":               item.Data.Coin,
+			"mcap":               item.Data.EstMCap,
+			"px_chg":             item.Data.PxChg,
+			"funding_pct":        nullableFunding(item.Data),
+			"has_funding":        item.Data.HasFunding,
+			"funding_bias":       fundingBiasForData(item.Data),
+			"funding_bias_label": fundingBiasLabelForData(item.Data),
+			"fr_delta":           item.FRDelta,
+			"trend":              item.Trend,
+			"trend_label":        fundingTrendLabel(item.Trend),
+			"rates":              item.Rates,
 		})
 	}
 	return rows
@@ -622,7 +677,7 @@ func buildHighlights(coinData map[string]marketData, chase []chaseEntry) []strin
 
 	hotFuel := []marketData{}
 	for _, data := range coinData {
-		if data.Heat > 0 && data.FundingPct < -0.03 {
+		if data.Heat > 0 && data.HasFunding && data.FundingPct < -0.03 {
 			hotFuel = append(hotFuel, data)
 		}
 	}
@@ -634,7 +689,7 @@ func buildHighlights(coinData map[string]marketData, chase []chaseEntry) []strin
 	}
 
 	for _, item := range firstChaseEntries(chase, 5) {
-		if item.Trend != "accelerating_negative" || highlightContains(highlights, item.Data.Coin) {
+		if item.Trend != "accelerating_short" || highlightContains(highlights, item.Data.Coin) {
 			continue
 		}
 		highlights = append(highlights, fmt.Sprintf("%s - funding keeps worsening %.3f%%", item.Data.Coin, item.Data.FundingPct))
@@ -756,17 +811,82 @@ func formatChaseTable(values []chaseEntry, limit int) string {
 	return strings.Join(lines, "\n")
 }
 
-func fundingTrend(delta float64) string {
+func fundingTrend(previous float64, current float64, delta float64) string {
 	switch {
+	case previous >= 0 && current < 0:
+		return "long_to_short"
+	case previous < 0 && current >= 0:
+		return "short_to_long"
 	case delta < -0.05:
-		return "accelerating_negative"
+		return "accelerating_short"
 	case delta < -0.01:
-		return "turning_negative"
+		return "turning_short"
 	case math.Abs(delta) < 0.01:
 		return "flat"
 	default:
 		return "recovering"
 	}
+}
+
+func fundingTrendLabel(trend string) string {
+	switch trend {
+	case "long_to_short":
+		return "多转空"
+	case "short_to_long":
+		return "空转多"
+	case "accelerating_short":
+		return "空头加速"
+	case "turning_short":
+		return "转空"
+	case "recovering":
+		return "回升"
+	case "flat":
+		return "持平"
+	default:
+		return trend
+	}
+}
+
+func fundingBias(value float64) string {
+	if value < 0 {
+		return "short_pays"
+	}
+	if value > 0 {
+		return "long_pays"
+	}
+	return "neutral"
+}
+
+func fundingBiasLabel(value float64) string {
+	switch fundingBias(value) {
+	case "short_pays":
+		return "空头付费/空头拥挤"
+	case "long_pays":
+		return "多头付费/多头拥挤"
+	default:
+		return "中性"
+	}
+}
+
+func nullableFunding(data marketData) any {
+	if !data.HasFunding {
+		return nil
+	}
+	return data.FundingPct
+}
+
+func fundingBiasForData(data marketData) string {
+	if !data.HasFunding {
+		return "unknown"
+	}
+	return fundingBias(data.FundingPct)
+}
+
+func fundingBiasLabelForData(data marketData) string {
+	if !data.HasFunding {
+		return "无资金费率数据"
+	}
+	return fundingBiasLabel(data.FundingPct)
 }
 
 func lastFundingRates(rates []float64, fallback float64) []float64 {
@@ -806,6 +926,15 @@ func anyToFloat(value any) float64 {
 	}
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 type ticker24h struct {
 	Symbol             string `json:"symbol"`
 	QuoteVolume        string `json:"quoteVolume"`
@@ -820,9 +949,33 @@ type premiumIndexItem struct {
 
 type marketCapsResponse struct {
 	Data []struct {
-		Name      string   `json:"name"`
-		MarketCap *float64 `json:"marketCap"`
+		Name        string   `json:"name"`
+		FullName    string   `json:"fullName"`
+		AssetName   string   `json:"assetName"`
+		DisplayName string   `json:"displayName"`
+		Title       string   `json:"title"`
+		MarketCap   *float64 `json:"marketCap"`
 	} `json:"data"`
+}
+
+type binanceMarketData struct {
+	Caps  map[string]float64
+	Names map[string]string
+}
+
+func newBinanceMarketData() binanceMarketData {
+	return binanceMarketData{
+		Caps:  map[string]float64{},
+		Names: map[string]string{},
+	}
+}
+
+func (m binanceMarketData) DisplayName(symbol string) string {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if name := strings.TrimSpace(m.Names[symbol]); name != "" {
+		return name
+	}
+	return symbol
 }
 
 type cgTrendingResponse struct {

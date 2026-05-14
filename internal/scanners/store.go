@@ -15,6 +15,8 @@ func StoreSnapshot(db *gorm.DB, payload SnapshotPayload) error {
 	if err != nil {
 		return err
 	}
+	token.Symbol = strings.ToUpper(payload.Symbol)
+	token.Name = betterTokenName(token.Name, payload.Name, token.Symbol)
 	token.LastSeenAt = nowString()
 	if err := db.Save(&token).Error; err != nil {
 		return err
@@ -53,7 +55,7 @@ func StoreSignalEvent(db *gorm.DB, payload SignalPayload, bucketMinutes int) (*m
 	}
 	if payload.Token != nil {
 		token.Symbol = strings.ToUpper(payload.Token.Symbol)
-		token.Name = firstNonEmpty(payload.Token.Name, token.Name)
+		token.Name = betterTokenName(token.Name, payload.Token.Name, token.Symbol)
 		token.NarrativeTheme = firstNonEmpty(payload.Token.NarrativeTheme, token.NarrativeTheme)
 		token.NarrativeTagsJSON = jsonString(payload.Token.NarrativeTags)
 		if payload.Token.SocialLinksJSON != "" {
@@ -213,4 +215,20 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func betterTokenName(current string, incoming string, symbol string) string {
+	current = strings.TrimSpace(current)
+	incoming = strings.TrimSpace(incoming)
+	symbol = strings.TrimSpace(symbol)
+	if incoming == "" {
+		return current
+	}
+	if current == "" || strings.EqualFold(current, symbol) {
+		return incoming
+	}
+	if !strings.EqualFold(incoming, symbol) {
+		return incoming
+	}
+	return current
 }

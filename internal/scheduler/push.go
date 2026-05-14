@@ -26,19 +26,21 @@ var (
 )
 
 var s3TypeLabels = map[string]string{
-	"heat":                       "热度信号",
-	"heat_report":                "S3 热度总结",
-	"heat_plus_oi":               "热度 + OI",
-	"heat_plus_negative_funding": "热度 + 负费率",
-	"oi_anomaly":                 "OI 异动",
+	"heat":                          "热度信号",
+	"heat_report":                   "S3 热度总结",
+	"heat_plus_oi":                  "热度 + OI",
+	"heat_plus_negative_funding":    "热度 + 负费率",
+	"heat_plus_oi_negative_funding": "热度 + OI + 负费率",
+	"oi_anomaly":                    "OI 异动",
 }
 
 var s3TypeSummaries = map[string]string{
-	"heat":                       "热度开始聚集，值得放进观察名单继续盯。",
-	"heat_report":                "S3 每轮热度、资金费率和 OI 聚合总结。",
-	"heat_plus_oi":               "热度已经起来，未平仓总额同步增加，属于更强确认。",
-	"heat_plus_negative_funding": "热度有了，负费率说明空头拥挤，容易形成逼空逻辑。",
-	"oi_anomaly":                 "未平仓总额变化很大，但未必有热度配合，需要更谨慎判断。",
+	"heat":                          "热度开始聚集，值得放进观察名单继续盯。",
+	"heat_report":                   "S3 每轮热度、资金费率和 OI 聚合总结。",
+	"heat_plus_oi":                  "热度已经起来，未平仓总额同步增加，属于更强确认。",
+	"heat_plus_negative_funding":    "热度有了，负费率说明空头拥挤，容易形成逼空逻辑。",
+	"heat_plus_oi_negative_funding": "热度、持仓增长和负费率同时出现，是 S3 内部更强的组合确认。",
+	"oi_anomaly":                    "未平仓总额变化很大，但未必有热度配合，需要更谨慎判断。",
 }
 
 var s5TypeLabels = map[string]string{
@@ -711,6 +713,9 @@ func formatS3SignalMessage(signal *model.SignalEvent) string {
 		fmt.Sprintf("🌐 成交额: $%s   市值: $%s", formatCompactNumber(raw["vol"]), formatCompactNumber(raw["est_mcap"])),
 		"🧾 现货: " + boolCN(raw["has_spot"]),
 	}
+	if bias := rawString(raw["funding_bias_label"]); bias != "" {
+		metricLines = append(metricLines, "费率方向: "+bias)
+	}
 	if heat, ok := rawFloatOK(raw["heat"]); ok {
 		metricLines[3] += fmt.Sprintf("   热度分: %.0f", heat)
 	}
@@ -854,11 +859,15 @@ func formatS5SignalMessage(signal *model.SignalEvent, token *model.TokenProfile)
 
 func formatS2SignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
 	raw := parseRaw(signal.RawJSON)
+	if direction := rawString(raw["position_direction"]); direction != "" {
+		raw["direction_line"] = strings.TrimSpace(rawString(raw["funding_flip_label"]) + " / " + direction)
+	}
 	tags := parseStringList(signal.TagsJSON)
 	signalLabel := labelOr(s2TypeLabels, signal.SignalType, signal.SignalType)
 	summary := labelOr(s2TypeSummaries, signal.SignalType, signal.Reason)
 	metricLines := []string{
 		fmt.Sprintf("📉 费率: %s → %s", fmtSigned(raw["previous_funding_pct"], 3, "%"), fmtSigned(raw["current_funding_pct"], 3, "%")),
+		"🧭 方向: " + rawStringDefault(raw["direction_line"], "-"),
 		fmt.Sprintf("📊 OI: %s   现货: %s", fmtSigned(raw["oi_change_pct"], 1, "%"), boolCN(raw["has_spot"])),
 		"🌐 成交额: $" + formatCompactNumber(raw["volume_usd"]),
 	}

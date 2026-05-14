@@ -199,7 +199,7 @@
         <template #signal_type="{ record }">
           <a-space direction="vertical" :size="0">
             <span class="signal-type-text">{{
-              signalTypeLabel(record.signal_type)
+              signalTypeLabelForRecord(record)
             }}</span>
             <span class="table-sub-text">{{ record.signal_type }}</span>
           </a-space>
@@ -270,6 +270,7 @@
     scoreLevel,
     scoreText,
     signalTypeLabel,
+    signalTypeLabelForRecord,
     summarizeReason,
   } from '../shared';
 
@@ -447,7 +448,9 @@
     return `${value.slice(0, 6)}...${value.slice(-6)}`;
   };
 
-  const normalizeFilterOptions = (raw?: Partial<FilterOptions> & Record<string, any>) => {
+  const normalizeFilterOptions = (
+    raw?: Partial<FilterOptions> & Record<string, any>
+  ) => {
     if (!raw) return filterOptions.value;
     return {
       sources: raw.sources || raw.Sources || [],
@@ -585,6 +588,9 @@
         chain: record.chain,
         address: record.address,
       },
+      query: {
+        source: record.source,
+      },
     });
   };
 
@@ -603,7 +609,7 @@
       item.symbol,
       item.address,
       chainLabel(item.chain),
-      signalTypeLabel(item.signal_type),
+      signalTypeLabelForRecord(item),
       priorityLabel(item.priority),
       formatScore(item.score),
       summarizeReason(item.signal_type, item.reason),

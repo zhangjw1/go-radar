@@ -440,6 +440,7 @@ func (s *Server) apiTelegramTest(c *gin.Context) {
 func (s *Server) apiToken(c *gin.Context) {
 	chain := strings.ToLower(strings.TrimSpace(c.Param("chain")))
 	address := strings.ToLower(strings.TrimSpace(c.Param("address")))
+	source := strings.ToLower(strings.TrimSpace(c.Query("source")))
 
 	var token model.TokenProfile
 	err := s.db.Where("chain = ? AND lower(address) = ?", chain, address).First(&token).Error
@@ -453,13 +454,21 @@ func (s *Server) apiToken(c *gin.Context) {
 	}
 
 	var snapshots []model.TokenSnapshot
-	if err := s.db.Where("token_id = ?", token.ID).Order("created_at desc").Limit(20).Find(&snapshots).Error; err != nil {
+	snapshotQuery := s.db.Where("token_id = ?", token.ID)
+	if source != "" {
+		snapshotQuery = snapshotQuery.Where("source = ?", source)
+	}
+	if err := snapshotQuery.Order("created_at desc").Limit(20).Find(&snapshots).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var signals []model.SignalEvent
-	if err := s.db.Where("chain = ? AND address = ?", token.Chain, token.Address).Order("created_at desc").Limit(20).Find(&signals).Error; err != nil {
+	signalQuery := s.db.Where("chain = ? AND address = ?", token.Chain, token.Address)
+	if source != "" {
+		signalQuery = signalQuery.Where("source = ?", source)
+	}
+	if err := signalQuery.Order("created_at desc").Limit(20).Find(&signals).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

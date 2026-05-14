@@ -10,6 +10,7 @@ export interface SignalEvent {
   priority: string;
   score: number;
   reason: string;
+  raw_json?: string;
   created_at: string;
   pushed_at?: string;
 }
@@ -131,8 +132,13 @@ export function querySettings() {
   return axios.get<SettingsResponse>('/radar-api/settings');
 }
 
-export function queryToken(chain: string, address: string) {
+export function queryToken(
+  chain: string,
+  address: string,
+  params?: Record<string, unknown>
+) {
   return axios.get<TokenDetailResponse>(
-    `/radar-api/tokens/${chain}/${address}`
+    `/radar-api/tokens/${chain}/${address}`,
+    { params }
   );
 }
