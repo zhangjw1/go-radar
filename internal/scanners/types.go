@@ -46,6 +46,7 @@ type SignalPayload struct {
 	Score      float64        // Score 是扫描器计算出的综合分数。
 	Reason     string         // Reason 是触发信号的可读原因。
 	Tags       []string       // Tags 是用于页面展示和后续筛选的标签。
+	ForcePush  bool           // ForcePush 表示该信号必须绕过摘要/冷却策略立即推送。
 	Raw        map[string]any // Raw 保存原始响应和辅助计算数据。
 	Token      *TokenPayload  // Token 是可选的代币资料补充，会同步更新 tokens 表。
 	DedupeKey  string         // DedupeKey 是可选自定义去重键；为空时由存储层按时间桶生成。

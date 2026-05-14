@@ -33,6 +33,24 @@ func IsFundingFlip(previous *float64, current *float64) bool {
 	return *previous >= 0 && *current < 0
 }
 
+// FundingFlipDirection 返回资金费率翻转方向。
+//
+// 约定：
+// 正转负 = 多转空，说明市场从多头付费切到空头付费；
+// 负转正 = 空转多，说明市场从空头付费切到多头付费。
+func FundingFlipDirection(previous *float64, current *float64) (string, string, string) {
+	if previous == nil || current == nil {
+		return "", "", ""
+	}
+	if *previous >= 0 && *current < 0 {
+		return "positive_to_negative", "多转空", "正转负"
+	}
+	if *previous < 0 && *current >= 0 {
+		return "negative_to_positive", "空转多", "负转正"
+	}
+	return "", "", ""
+}
+
 // ScoreFundingSignal 为 S2 资金费率翻负且 OI 上升的信号评分。
 func ScoreFundingSignal(currentFRPct float64, oiChangePct float64, hasSpot bool, volumeUSD float64) float64 {
 	score := 55 + math.Min(math.Abs(currentFRPct)*800, 20) + math.Min(math.Max(oiChangePct, 0), 40)

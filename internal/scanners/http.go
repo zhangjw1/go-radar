@@ -21,7 +21,7 @@ func NewHTTPClient() *http.Client {
 	} else if !EnvBool("HTTP_TRUST_ENV", false) {
 		transport.Proxy = nil
 	}
-	return &http.Client{Timeout: time.Duration(EnvFloat("GMGN_TIMEOUT_SECONDS", 6)) * time.Second, Transport: transport}
+	return &http.Client{Timeout: time.Duration(EnvFloat("GMGN_TIMEOUT_SECONDS", 15)) * time.Second, Transport: transport}
 }
 
 func GetJSON(ctx context.Context, client *http.Client, rawURL string, params url.Values, target any) error {

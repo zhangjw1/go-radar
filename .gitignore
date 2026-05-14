@@ -1,5 +1,6 @@
 .env
 .gocache/
+.gomodcache/
 radar.db
 radar.db-*
 node_modules/
@@ -7,3 +8,4 @@ bin/
 tmp/
 *.exe
 coverage.out
+.vite-*.log

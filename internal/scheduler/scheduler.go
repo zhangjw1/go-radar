@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"go-radar/internal/insider"
 	"go-radar/internal/model"
 	"go-radar/internal/scanners"
 	s1scanner "go-radar/internal/scanners/s1"
@@ -48,11 +49,12 @@ func New(db *gorm.DB, enabled bool) *Scheduler {
 		db:      db,
 		enabled: enabled,
 		specs: []Spec{
-			{Name: "s7", EnabledKey: "enable_scanner_s7", IntervalKey: "scan_interval_s7", EnabledEnvKey: "ENABLE_SCANNER_S7", IntervalEnvKey: "SCAN_INTERVAL_S7", IntervalSeconds: envInt("SCAN_INTERVAL_S7", 20)},
-			{Name: "s5", EnabledKey: "enable_scanner_s5", IntervalKey: "scan_interval_s5", EnabledEnvKey: "ENABLE_SCANNER_S5", IntervalEnvKey: "SCAN_INTERVAL_S5", IntervalSeconds: envInt("SCAN_INTERVAL_S5", 120)},
-			{Name: "s3", EnabledKey: "enable_scanner_s3", IntervalKey: "scan_interval_s3", EnabledEnvKey: "ENABLE_SCANNER_S3", IntervalEnvKey: "SCAN_INTERVAL_S3", IntervalSeconds: envInt("SCAN_INTERVAL_S3", 300)},
-			{Name: "s2", EnabledKey: "enable_scanner_s2", IntervalKey: "scan_interval_s2", EnabledEnvKey: "ENABLE_SCANNER_S2", IntervalEnvKey: "SCAN_INTERVAL_S2", IntervalSeconds: envInt("SCAN_INTERVAL_S2", 120)},
-			{Name: "s1", EnabledKey: "enable_scanner_s1", IntervalKey: "scan_interval_s1", EnabledEnvKey: "ENABLE_SCANNER_S1", IntervalEnvKey: "SCAN_INTERVAL_S1", IntervalSeconds: envInt("SCAN_INTERVAL_S1", 30)},
+			{Name: "s7", EnabledKey: "enable_scanner_s7", IntervalKey: "scan_interval_s7", EnabledEnvKey: "ENABLE_SCANNER_S7", IntervalEnvKey: "SCAN_INTERVAL_S7", IntervalSeconds: envInt("SCAN_INTERVAL_S7", 1800)},
+			{Name: "s5", EnabledKey: "enable_scanner_s5", IntervalKey: "scan_interval_s5", EnabledEnvKey: "ENABLE_SCANNER_S5", IntervalEnvKey: "SCAN_INTERVAL_S5", IntervalSeconds: envInt("SCAN_INTERVAL_S5", 600)},
+			{Name: "s3", EnabledKey: "enable_scanner_s3", IntervalKey: "scan_interval_s3", EnabledEnvKey: "ENABLE_SCANNER_S3", IntervalEnvKey: "SCAN_INTERVAL_S3", IntervalSeconds: envInt("SCAN_INTERVAL_S3", 1800)},
+			{Name: "s2", EnabledKey: "enable_scanner_s2", IntervalKey: "scan_interval_s2", EnabledEnvKey: "ENABLE_SCANNER_S2", IntervalEnvKey: "SCAN_INTERVAL_S2", IntervalSeconds: envInt("SCAN_INTERVAL_S2", 1800)},
+			{Name: "s1", EnabledKey: "enable_scanner_s1", IntervalKey: "scan_interval_s1", EnabledEnvKey: "ENABLE_SCANNER_S1", IntervalEnvKey: "SCAN_INTERVAL_S1", IntervalSeconds: envInt("SCAN_INTERVAL_S1", 3600)},
+			{Name: "insider", EnabledKey: "enable_insider_monitor", IntervalKey: "scan_interval_insider", EnabledEnvKey: "ENABLE_INSIDER_MONITOR", IntervalEnvKey: "SCAN_INTERVAL_INSIDER", IntervalSeconds: envInt("SCAN_INTERVAL_INSIDER", 300)},
 		},
 	}
 }
@@ -135,7 +137,31 @@ func (s *Scheduler) runPlaceholder(spec Spec) {
 		s.runScanner("s5", s5scanner.NewScanner(s.db).Scan)
 		return
 	}
+	if spec.Name == "insider" {
+		s.runInsider()
+		return
+	}
 	s.recordRun(spec.Name, "skipped", map[string]any{"reason": "go_scanner_not_migrated"}, "scanner not migrated to Go yet")
+}
+
+func (s *Scheduler) runInsider() {
+	startedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	store := insider.NewStore(s.db)
+	engineName := settingString(s.db, "insider_monitor_engine", "INSIDER_MONITOR_ENGINE", insider.EngineService)
+	cfg := insider.LoadEngineConfig()
+	var engine insider.Engine
+	if strings.EqualFold(engineName, insider.EngineLegacy) {
+		engine = insider.NewLegacyEngine(store, cfg)
+	} else {
+		engine = insider.NewServiceEngine(store, cfg)
+	}
+	if err := engine.Sync(ctx); err != nil {
+		s.recordRunWithStart("insider", startedAt, "error", map[string]any{"engine": engine.Name()}, err.Error(), 0, 0)
+		return
+	}
+	s.recordRunWithStart("insider", startedAt, "ok", map[string]any{"engine": engine.Name()}, "", 0, 0)
 }
 
 // runScanner 执行一次扫描、入库快照和信号，并处理共振信号与 Telegram 推送。
@@ -146,7 +172,7 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 	signalCount := 0
 	pushedCount := 0
 	resonanceCount := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	logInfo("scanner %s started", name)
 	defer func() {

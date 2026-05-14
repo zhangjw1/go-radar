@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go-radar/internal/config"
+	"go-radar/internal/insider"
 	"go-radar/internal/model"
 	"go-radar/internal/scheduler"
 	radartelegram "go-radar/internal/telegram"
@@ -29,10 +30,12 @@ const maxLimit = 500
 
 // Server 持有 HTTP 层处理请求需要的共享依赖。
 type Server struct {
-	settings  *config.Settings     // settings 是启动配置，用于页面展示和健康检查。
-	db        *gorm.DB             // db 是查询页面和 API 数据的数据库连接。
-	scheduler *scheduler.Scheduler // scheduler 用于页面展示任务状态；为空时表示未接入调度器。
-	templates *template.Template   // templates 是编译后的嵌入式 HTML 模板集合。
+	settings     *config.Settings     // settings 是启动配置，用于页面展示和健康检查。
+	db           *gorm.DB             // db 是查询页面和 API 数据的数据库连接。
+	scheduler    *scheduler.Scheduler // scheduler 用于页面展示任务状态；为空时表示未接入调度器。
+	templates    *template.Template   // templates 是编译后的嵌入式 HTML 模板集合。
+	insiderStore *insider.Store
+	insiderSvc   *insider.Service
 }
 
 // SidebarGroup 是侧边栏中的一组导航。
@@ -60,6 +63,7 @@ type PageData struct {
 type SignalFilters struct {
 	Source        string // Source 按扫描器来源筛选。
 	Chain         string // Chain 按链或市场筛选。
+	Symbol        string // Symbol 按展示符号或地址模糊筛选。
 	SignalType    string // SignalType 按信号类型筛选。
 	Priority      string // Priority 按优先级筛选。
 	TimeRange     string // TimeRange 按最近时间窗口筛选。
@@ -68,11 +72,11 @@ type SignalFilters struct {
 
 // FilterOptions 是页面下拉框可选项集合。
 type FilterOptions struct {
-	Sources     []string // Sources 是来源下拉选项。
-	Chains      []string // Chains 是链下拉选项。
-	SignalTypes []string // SignalTypes 是信号类型下拉选项。
-	Priorities  []string // Priorities 是优先级下拉选项。
-	TimeRanges  []string // TimeRanges 是时间范围下拉选项。
+	Sources     []string `json:"sources"`     // Sources 是来源下拉选项。
+	Chains      []string `json:"chains"`      // Chains 是链下拉选项。
+	SignalTypes []string `json:"signalTypes"` // SignalTypes 是信号类型下拉选项。
+	Priorities  []string `json:"priorities"`  // Priorities 是优先级下拉选项。
+	TimeRanges  []string `json:"timeRanges"`  // TimeRanges 是时间范围下拉选项。
 }
 
 // DashboardData 是监控总览页的数据模型。
@@ -201,9 +205,10 @@ func NewRouter(settings *config.Settings, db *gorm.DB) *gin.Engine {
 func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler *scheduler.Scheduler) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	server := &Server{
-		settings:  settings,
-		db:        db,
-		scheduler: goScheduler,
+		settings:     settings,
+		db:           db,
+		scheduler:    goScheduler,
+		insiderStore: insider.NewStore(db),
 		templates: template.Must(template.New("").Funcs(template.FuncMap{
 			"sourceLabel":     sourceLabel,
 			"chainLabel":      chainLabel,
@@ -219,6 +224,7 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 			"sourceOrder":     sourceOrder,
 		}).ParseFS(templateFiles, "templates/*.html")),
 	}
+	server.insiderSvc = insider.NewService(server.insiderStore)
 
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())
@@ -232,6 +238,49 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 	router.POST("/api/settings", server.apiSettingsUpdate)
 	router.POST("/api/telegram/test", server.apiTelegramTest)
 	router.GET("/api/tokens/:chain/:address", server.apiToken)
+	router.GET("/api/insider/wallets", server.apiInsiderWallets)
+	router.POST("/api/insider/wallets", server.apiInsiderCreateWallet)
+	router.GET("/api/insider/wallets/:id", server.apiInsiderWallet)
+	router.PUT("/api/insider/wallets/:id", server.apiInsiderUpdateWallet)
+	router.DELETE("/api/insider/wallets/:id", server.apiInsiderDeleteWallet)
+	router.GET("/api/insider/wallets/:id/portfolio", server.apiInsiderPortfolio)
+	router.GET("/api/insider/wallets/:id/transactions", server.apiInsiderTransactions)
+	router.GET("/api/insider/wallets/:id/analytics", server.apiInsiderAnalytics)
+	router.POST("/api/insider/sync/trigger", server.apiInsiderSync)
+	router.GET("/api/insider/sync/status", server.apiInsiderStatus)
+	router.GET("/api/insider/alerts/rules", server.apiInsiderRules)
+	router.POST("/api/insider/alerts/rules", server.apiInsiderSaveRule)
+	router.PUT("/api/insider/alerts/rules/:id", server.apiInsiderSaveRule)
+	router.GET("/api/insider/alerts/history", server.apiInsiderHistory)
+	router.GET("/api/insider/alerts/channels", server.apiInsiderChannels)
+	router.POST("/api/insider/alerts/channels", server.apiInsiderSaveChannel)
+	router.PUT("/api/insider/alerts/channels/:id", server.apiInsiderSaveChannel)
+	router.GET("/radar-api/signals", server.apiSignals)
+	router.GET("/radar-api/pushes", server.apiPushes)
+	router.GET("/radar-api/jobs", server.apiJobs)
+	router.GET("/radar-api/watchlist", server.apiWatchlist)
+	router.POST("/radar-api/watchlist", server.apiWatchlistUpsert)
+	router.GET("/radar-api/settings", server.apiSettings)
+	router.POST("/radar-api/settings", server.apiSettingsUpdate)
+	router.POST("/radar-api/telegram/test", server.apiTelegramTest)
+	router.GET("/radar-api/tokens/:chain/:address", server.apiToken)
+	router.GET("/radar-api/insider/wallets", server.apiInsiderWallets)
+	router.POST("/radar-api/insider/wallets", server.apiInsiderCreateWallet)
+	router.GET("/radar-api/insider/wallets/:id", server.apiInsiderWallet)
+	router.PUT("/radar-api/insider/wallets/:id", server.apiInsiderUpdateWallet)
+	router.DELETE("/radar-api/insider/wallets/:id", server.apiInsiderDeleteWallet)
+	router.GET("/radar-api/insider/wallets/:id/portfolio", server.apiInsiderPortfolio)
+	router.GET("/radar-api/insider/wallets/:id/transactions", server.apiInsiderTransactions)
+	router.GET("/radar-api/insider/wallets/:id/analytics", server.apiInsiderAnalytics)
+	router.POST("/radar-api/insider/sync/trigger", server.apiInsiderSync)
+	router.GET("/radar-api/insider/sync/status", server.apiInsiderStatus)
+	router.GET("/radar-api/insider/alerts/rules", server.apiInsiderRules)
+	router.POST("/radar-api/insider/alerts/rules", server.apiInsiderSaveRule)
+	router.PUT("/radar-api/insider/alerts/rules/:id", server.apiInsiderSaveRule)
+	router.GET("/radar-api/insider/alerts/history", server.apiInsiderHistory)
+	router.GET("/radar-api/insider/alerts/channels", server.apiInsiderChannels)
+	router.POST("/radar-api/insider/alerts/channels", server.apiInsiderSaveChannel)
+	router.PUT("/radar-api/insider/alerts/channels/:id", server.apiInsiderSaveChannel)
 	router.GET("/dashboard", server.dashboard)
 	router.GET("/signals", server.signalsPage)
 	router.GET("/pushes", server.pushesPage)
@@ -280,14 +329,27 @@ func (s *Server) health(c *gin.Context) {
 
 func (s *Server) apiSignals(c *gin.Context) {
 	query := applySignalFilters(s.db.Model(&model.SignalEvent{}), filtersFromQuery(c))
-	query = query.Order("created_at desc").Limit(parseLimit(c.Query("limit")))
+	page, pageSize := parsePagination(c)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	query = query.Order("created_at desc").Limit(pageSize).Offset((page - 1) * pageSize)
 
 	var signals []model.SignalEvent
 	if err := query.Find(&signals).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": signals})
+	c.JSON(http.StatusOK, gin.H{
+		"items":    signals,
+		"total":    total,
+		"current":  page,
+		"pageSize": pageSize,
+		"filters":  s.filterOptions(),
+	})
 }
 
 func (s *Server) apiPushes(c *gin.Context) {
@@ -378,6 +440,7 @@ func (s *Server) apiTelegramTest(c *gin.Context) {
 func (s *Server) apiToken(c *gin.Context) {
 	chain := strings.ToLower(strings.TrimSpace(c.Param("chain")))
 	address := strings.ToLower(strings.TrimSpace(c.Param("address")))
+	source := strings.ToLower(strings.TrimSpace(c.Query("source")))
 
 	var token model.TokenProfile
 	err := s.db.Where("chain = ? AND lower(address) = ?", chain, address).First(&token).Error
@@ -391,13 +454,21 @@ func (s *Server) apiToken(c *gin.Context) {
 	}
 
 	var snapshots []model.TokenSnapshot
-	if err := s.db.Where("token_id = ?", token.ID).Order("created_at desc").Limit(20).Find(&snapshots).Error; err != nil {
+	snapshotQuery := s.db.Where("token_id = ?", token.ID)
+	if source != "" {
+		snapshotQuery = snapshotQuery.Where("source = ?", source)
+	}
+	if err := snapshotQuery.Order("created_at desc").Limit(20).Find(&snapshots).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	var signals []model.SignalEvent
-	if err := s.db.Where("chain = ? AND address = ?", token.Chain, token.Address).Order("created_at desc").Limit(20).Find(&signals).Error; err != nil {
+	signalQuery := s.db.Where("chain = ? AND address = ?", token.Chain, token.Address)
+	if source != "" {
+		signalQuery = signalQuery.Where("source = ?", source)
+	}
+	if err := signalQuery.Order("created_at desc").Limit(20).Find(&signals).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -719,6 +790,7 @@ func filtersFromQuery(c *gin.Context) SignalFilters {
 	return SignalFilters{
 		Source:        strings.TrimSpace(c.Query("source")),
 		Chain:         strings.TrimSpace(c.Query("chain")),
+		Symbol:        strings.TrimSpace(c.Query("symbol")),
 		SignalType:    strings.TrimSpace(c.Query("signal_type")),
 		Priority:      strings.TrimSpace(c.Query("priority")),
 		TimeRange:     timeRange,
@@ -734,6 +806,10 @@ func applySignalFilters(query *gorm.DB, filters SignalFilters) *gorm.DB {
 	if filters.Chain != "" {
 		query = query.Where("chain = ?", filters.Chain)
 	}
+	if filters.Symbol != "" {
+		like := "%" + filters.Symbol + "%"
+		query = query.Where("symbol LIKE ? OR address LIKE ?", like, like)
+	}
 	if filters.SignalType != "" {
 		query = query.Where("signal_type = ?", filters.SignalType)
 	}
@@ -741,7 +817,8 @@ func applySignalFilters(query *gorm.DB, filters SignalFilters) *gorm.DB {
 		query = query.Where("priority = ?", filters.Priority)
 	}
 	if filters.WatchlistOnly {
-		query = query.Joins("JOIN watchlist ON watchlist.chain = signals.chain AND watchlist.address = signals.address")
+		join := "JOIN t_radar_watchlist ON t_radar_watchlist.chain = t_radar_signal_event.chain AND t_radar_watchlist.address = t_radar_signal_event.address"
+		query = query.Joins(join)
 	}
 	return query
 }
@@ -782,9 +859,10 @@ func (s *Server) sourceCounts(hours int) map[string]int64 {
 
 func (s *Server) watchlistHitCount(hours int) int64 {
 	var count int64
+	join := "JOIN t_radar_watchlist ON t_radar_watchlist.chain = t_radar_signal_event.chain AND t_radar_watchlist.address = t_radar_signal_event.address"
 	_ = s.db.Model(&model.SignalEvent{}).
-		Joins("JOIN watchlist ON watchlist.chain = signals.chain AND watchlist.address = signals.address").
-		Where("signals.created_at >= ?", time.Now().UTC().Add(-time.Duration(hours)*time.Hour).Format(time.RFC3339Nano)).
+		Joins(join).
+		Where("t_radar_signal_event.created_at >= ?", time.Now().UTC().Add(-time.Duration(hours)*time.Hour).Format(time.RFC3339Nano)).
 		Count(&count).Error
 	return count
 }
@@ -1030,6 +1108,16 @@ func parseLimit(raw string) int {
 		return maxLimit
 	}
 	return limit
+}
+
+func parsePagination(c *gin.Context) (int, int) {
+	page, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", c.DefaultQuery("current", "1"))))
+	if err != nil || page <= 0 {
+		page = 1
+	}
+
+	pageSize := parseLimit(c.DefaultQuery("pageSize", c.Query("limit")))
+	return page, pageSize
 }
 
 func sidebarGroups() []SidebarGroup {
@@ -1286,18 +1374,20 @@ type watchlistPayload struct {
 
 func defaultSettingValue(key string) any {
 	switch key {
-	case "http_trust_env", "enable_scanner_s7", "enable_scanner_s5", "enable_scanner_s3", "enable_scanner_s2", "enable_scanner_s1", "enable_binance_square":
+	case "http_trust_env", "enable_scanner_s7", "enable_scanner_s5", "enable_scanner_s3", "enable_scanner_s2", "enable_scanner_s1", "enable_binance_square", "enable_insider_monitor":
 		return envBool(keyToEnv(key), false)
+	case "scan_interval_insider":
+		return envInt("SCAN_INTERVAL_INSIDER", 300)
 	case "scan_interval_s7":
-		return envInt("SCAN_INTERVAL_S7", 20)
+		return envInt("SCAN_INTERVAL_S7", 1800)
 	case "scan_interval_s5":
-		return envInt("SCAN_INTERVAL_S5", 120)
+		return envInt("SCAN_INTERVAL_S5", 600)
 	case "scan_interval_s3":
-		return envInt("SCAN_INTERVAL_S3", 300)
+		return envInt("SCAN_INTERVAL_S3", 1800)
 	case "scan_interval_s2":
-		return envInt("SCAN_INTERVAL_S2", 120)
+		return envInt("SCAN_INTERVAL_S2", 1800)
 	case "scan_interval_s1":
-		return envInt("SCAN_INTERVAL_S1", 30)
+		return envInt("SCAN_INTERVAL_S1", 3600)
 	case "gmgn_retries":
 		return envInt("GMGN_RETRIES", 0)
 	case "s7_min_notify_usd":
@@ -1320,8 +1410,10 @@ func defaultSettingValue(key string) any {
 		return envInt("S3_DIGEST_COOLDOWN_MINUTES", 10)
 	case "resonance_lookback_minutes":
 		return envInt("RESONANCE_LOOKBACK_MINUTES", 360)
+	case "insider_monitor_engine":
+		return firstNonEmpty(os.Getenv("INSIDER_MONITOR_ENGINE"), "service")
 	case "gmgn_timeout_seconds":
-		return envFloat("GMGN_TIMEOUT_SECONDS", 6)
+		return envFloat("GMGN_TIMEOUT_SECONDS", 15)
 	case "s5_min_gain_pct":
 		return envFloat("S5_MIN_GAIN_PCT", 5)
 	case "s5_min_mc":
@@ -1519,7 +1611,9 @@ var visibleSettingKeys = []string{
 	"enable_scanner_s3",
 	"enable_scanner_s2",
 	"enable_scanner_s1",
+	"enable_insider_monitor",
 	"enable_binance_square",
+	"scan_interval_insider",
 	"scan_interval_s7",
 	"scan_interval_s5",
 	"scan_interval_s3",
@@ -1540,6 +1634,7 @@ var visibleSettingKeys = []string{
 	"watchlist_cooldown_minutes",
 	"s3_digest_cooldown_minutes",
 	"resonance_lookback_minutes",
+	"insider_monitor_engine",
 }
 
 var overridableSettingKeys = append([]string{

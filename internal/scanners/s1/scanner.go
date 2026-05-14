@@ -1,10 +1,14 @@
 package s1
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -15,12 +19,12 @@ import (
 
 const binanceAnnouncementAPI = "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query"
 
-// Scanner 实现 S1 交易所公告扫描器。
+// Scanner 实现 S1 币安 Alpha 公告生命周期扫描器。
 //
-// 业务目标：从 Binance 新币/上币/Launchpool 等公告里发现早期项目，
-// 再用 CoinGecko 补充市值、FDV、分类和合约信息，最后生成 alpha_discovery 信号。
+// 业务目标：复刻 Python 版 announcement_listener、aggregation_worker、
+// post_launch_monitor 三段核心流程，同时保留 Go 版统一入库和推送策略。
 type Scanner struct {
-	db     *gorm.DB     // db 用于查询 dedupe_key，避免同一公告重复生成信号。
+	db     *gorm.DB     // db 用于保存扫描状态、快照和信号。
 	client *http.Client // client 是带代理和超时配置的 HTTP 客户端。
 }
 
@@ -29,25 +33,67 @@ type Scanner struct {
 // 业务上它代表一个“可能触发 S1 信号的原始新闻源”，后续会从标题中提取 symbol、
 // 公告类型和上线日期。
 type article struct {
-	Code        string `json:"code"`        // Code 是 Binance 文章唯一编号，用于构建公告级去重键。
-	Title       string `json:"title"`       // Title 是公告标题，是 S1 规则判断和 symbol 提取的主要输入。
+	Code        string `json:"code"`        // Code 是 Binance 文章唯一编号。
+	Title       string `json:"title"`       // Title 是规则过滤、symbol 提取和叙事抽取的主要输入。
 	ReleaseDate int64  `json:"releaseDate"` // ReleaseDate 是公告发布时间毫秒时间戳。
-	CatalogID   int    // CatalogID 标记公告来自哪个 Binance 栏目，便于后续排查来源。
+	CatalogID   int    // CatalogID 标记公告来自哪个 Binance 栏目。
 }
 
 // coinGeckoData 是 S1 对公告代币做外部补全后的市场画像。
 //
-// 业务上它用于判断项目分层、叙事主题和信号优先级；CoinGecko 查不到时，
-// S1 仍会用公告本身生成弱信号。
+// 业务上它用于判断项目分层、叙事主题、机构标签和上线后跟踪指标；
+// CoinGecko 查不到时，S1 仍可用公告本身生成较弱信号。
 type coinGeckoData struct {
-	Found       bool     // Found 表示是否在 CoinGecko 找到匹配币种。
-	Price       float64  // Price 是当前美元价格。
-	FDV         float64  // FDV 是完全稀释估值，用于项目分层。
-	MCap        float64  // MCap 是流通市值，用于项目分层。
-	Chain       string   // Chain 是 CoinGecko platform 名称，会映射到本系统链标识。
-	Contract    string   // Contract 是 CoinGecko 给出的合约地址。
-	Categories  []string // Categories 是 CoinGecko 分类，用于叙事识别。
-	Description string   // Description 是 CoinGecko 项目简介，用于叙事识别和页面展示。
+	Found             bool     // Found 表示是否在 CoinGecko 找到匹配币种。
+	Price             float64  // Price 是当前美元价格。
+	FDV               float64  // FDV 是完全稀释估值。
+	MCap              float64  // MCap 是流通市值。
+	TotalSupply       float64  // TotalSupply 是总供应量。
+	CirculatingSupply float64  // CirculatingSupply 是流通供应量。
+	Chain             string   // Chain 是 CoinGecko platform 名称。
+	Contract          string   // Contract 是 CoinGecko 给出的合约地址。
+	Categories        []string // Categories 是 CoinGecko 分类，用于叙事和 VC 识别。
+	Description       string   // Description 是 CoinGecko 项目简介。
+}
+
+// alphaProject 是 S1 在扫描器状态里持久化的项目生命周期对象。
+//
+// 它对应 Python 版 projects 表和 pushes 表的合并形态：项目资料、评级结果、
+// 上线时间、已推送阶段都放在这里，避免每轮重复推送。
+type alphaProject struct {
+	ID                string            `json:"id"`                 // ID 是按 symbol + 日期生成的稳定项目 ID。
+	Symbol            string            `json:"symbol"`             // Symbol 是公告中提取的代币符号。
+	Name              string            `json:"name"`               // Name 是公告标题中提取的项目名，可能为空。
+	LaunchTime        string            `json:"launch_time"`        // LaunchTime 是公告发布时间/上线时间，供倒计时和上线后跟踪使用。
+	Source            string            `json:"source"`             // Source 是项目发现来源，当前主要是 binance_announcement。
+	RawText           string            `json:"raw_text"`           // RawText 是公告原始标题，用于规则过滤和 AI/规则抽取。
+	Tier              string            `json:"tier"`               // Tier 是 S/A/B/C/PENDING/EXCLUDED/ERROR 分层结果。
+	TierReason        string            `json:"tier_reason"`        // TierReason 是分层原因。
+	Narrative         string            `json:"narrative"`          // Narrative 是项目主叙事，例如 ai_agent、defi、meme。
+	NarrativeDesc     string            `json:"narrative_desc"`     // NarrativeDesc 是 AI/规则生成的一句话项目描述。
+	VCs               []string          `json:"vcs"`                // VCs 是识别出的投资机构列表。
+	IsDarling         bool              `json:"is_darling"`         // IsDarling 表示是否命中 YZi/Binance Labs 等币安亲儿子信号。
+	OpenPrice         float64           `json:"open_price"`         // OpenPrice 是聚合时记录的基准价格，用于上线后涨跌幅计算。
+	TotalSupply       float64           `json:"total_supply"`       // TotalSupply 是 CoinGecko 给出的总供应量。
+	CirculatingSupply float64           `json:"circulating_supply"` // CirculatingSupply 是 CoinGecko 给出的流通供应量。
+	FDV               float64           `json:"fdv"`                // FDV 是完全稀释估值。
+	CirculatingMCap   float64           `json:"circulating_mcap"`   // CirculatingMCap 是流通市值。
+	Chain             string            `json:"chain"`              // Chain 是映射后的链标识。
+	Contract          string            `json:"contract"`           // Contract 是合约地址；缺失时使用内部 symbol_date 地址。
+	Excluded          bool              `json:"excluded"`           // Excluded 表示该项目已被排除，不再推送和跟踪。
+	ExcludeReason     string            `json:"exclude_reason"`     // ExcludeReason 是排除原因，例如 already_tge、meme_only。
+	DiscoveredAt      string            `json:"discovered_at"`      // DiscoveredAt 是首次发现时间。
+	UpdatedAt         string            `json:"updated_at"`         // UpdatedAt 是最近状态更新时间。
+	Pushes            map[string]string `json:"pushes"`             // Pushes 记录各阶段是否已推送，key 为 discovery/t_minus_30m 等。
+}
+
+// narrativeExtract 是 LLM 或规则降级后得到的项目研究结论。
+type narrativeExtract struct {
+	Narrative     string   `json:"narrative"`      // Narrative 是项目主叙事分类。
+	NarrativeDesc string   `json:"narrative_desc"` // NarrativeDesc 是简短中文描述。
+	VCs           []string `json:"vcs"`            // VCs 是从公告和 CoinGecko 分类中提取的机构。
+	IsDarling     bool     `json:"is_darling"`     // IsDarling 表示是否属于币安重点扶持信号。
+	ExcludeReason string   `json:"exclude_reason"` // ExcludeReason 非空时表示应排除该项目。
 }
 
 // NewScanner 创建 S1 扫描器实例。
@@ -55,13 +101,57 @@ func NewScanner(db *gorm.DB) *Scanner {
 	return &Scanner{db: db, client: scanners.NewHTTPClient()}
 }
 
-// Scan 执行一次 S1 扫描：拉公告、过滤触发标题、补全市场信息并生成快照/信号。
+// Scan 执行一次 S1 扫描。
+//
+// Go 版调度器是按 tick 调用单个 Scan，因此这里把 Python 版三个协程的关键动作折叠到一次扫描中：
+// 1. 拉公告并发现新项目；
+// 2. 对 PENDING 项目做 CoinGecko + LLM/规则聚合、评级和 discovery 推送；
+// 3. 对活跃项目做 T-3h、T-30m、上线瞬间、上线后 30min*4 和异常监控。
 func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	result := scanners.Result{ScannerName: "s1", Metadata: map[string]any{}}
+	projects, err := s.loadProjects()
+	if err != nil {
+		return result, err
+	}
+
 	announcements, err := s.fetchAnnouncements(ctx, 20)
 	if err != nil {
 		return result, err
 	}
+	newCandidates := s.discoverProjects(announcements, projects)
+
+	aggregated := 0
+	for id, project := range projects {
+		if project.Excluded || project.Tier != "PENDING" {
+			continue
+		}
+		signals, snapshots, warnings := s.aggregateProject(ctx, &project)
+		result.Signals = append(result.Signals, signals...)
+		result.Snapshots = append(result.Snapshots, snapshots...)
+		result.Warnings = append(result.Warnings, warnings...)
+		projects[id] = project
+		aggregated++
+	}
+
+	monitorSignals, monitorSnapshots, warnings := s.monitorProjects(ctx, projects)
+	result.Signals = append(result.Signals, monitorSignals...)
+	result.Snapshots = append(result.Snapshots, monitorSnapshots...)
+	result.Warnings = append(result.Warnings, warnings...)
+
+	if err := s.saveProjects(projects); err != nil {
+		return result, err
+	}
+	result.Metadata = map[string]any{
+		"announcement_count": len(announcements),
+		"new_candidates":     newCandidates,
+		"aggregated":         aggregated,
+		"active_projects":    countActiveProjects(projects),
+		"warnings":           result.Warnings,
+	}
+	return result, nil
+}
+
+func (s *Scanner) discoverProjects(announcements []article, projects map[string]alphaProject) int {
 	newCandidates := 0
 	for _, item := range announcements {
 		if item.Title == "" || !IsTrigger(item.Title) {
@@ -71,98 +161,242 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 		if symbol == "" {
 			continue
 		}
-		launchDate := time.Now().UTC().Format("2006-01-02")
-		if item.ReleaseDate > 0 {
-			launchDate = time.UnixMilli(item.ReleaseDate).UTC().Format("2006-01-02")
-		}
-		dedupeKey := BuildArticleDedupeKey(item.Code, item.Title, symbol, launchDate)
-		exists, err := scanners.DedupeExists(s.db, dedupeKey)
-		if err != nil {
-			return result, err
-		}
-		if exists {
+		launchTime, launchDate := releaseTimes(item.ReleaseDate)
+		pid := ProjectID(symbol, launchDate)
+		if _, ok := projects[pid]; ok {
 			continue
 		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		projects[pid] = alphaProject{
+			ID:           pid,
+			Symbol:       strings.ToUpper(symbol),
+			Name:         ExtractName(item.Title),
+			LaunchTime:   launchTime,
+			Source:       "binance_announcement",
+			RawText:      item.Title,
+			Tier:         "PENDING",
+			VCs:          []string{},
+			DiscoveredAt: now,
+			UpdatedAt:    now,
+			Pushes:       map[string]string{},
+		}
 		newCandidates++
-		name := ExtractName(item.Title)
-		cg, warnings := s.fetchCoinGecko(ctx, symbol)
-		result.Warnings = append(result.Warnings, warnings...)
-		narrative, narrativeDesc, vcs, isDarling := InferNarrative(item.Title, cg.Categories, cg.Description)
-		tier, tierReason := RateProject(cg.MCap, cg.FDV, vcs, narrative, isDarling)
-		priority := "low"
-		if tier == "S" || tier == "A" {
-			priority = "high"
-		} else if tier == "B" {
-			priority = "medium"
-		}
-		chain := MapChain(cg.Chain)
-		address := strings.ToLower(cg.Contract)
-		if address == "" {
-			address = strings.ToLower(symbol + "_" + launchDate)
-		}
-		announcementKind := DetectAnnouncementKind(item.Title)
-		description := narrativeDesc
-		if description == "" && cg.Description != "" {
-			description = cg.Description
-			if len(description) > 120 {
-				description = description[:120]
-			}
-		}
-		tags := append([]string{announcementKind, tier, narrative}, firstN(vcs, 3)...)
-		raw := map[string]any{
-			"title":             item.Title,
-			"fdv":               cg.FDV,
-			"mcap":              cg.MCap,
-			"price":             cg.Price,
-			"vcs":               vcs,
-			"is_darling":        isDarling,
-			"tier":              tier,
-			"tier_reason":       tierReason,
-			"launch_date":       launchDate,
-			"announcement_kind": announcementKind,
-			"article_code":      item.Code,
-		}
-		price := cg.Price
-		mcap := cg.MCap
-		result.Snapshots = append(result.Snapshots, scanners.SnapshotPayload{
-			Source:  "s1",
-			Chain:   chain,
-			Address: address,
-			Symbol:  symbol,
-			Name:    firstNonEmpty(name, symbol),
-			Price:   optionalFloat(price),
-			MC:      optionalFloat(mcap),
-			Raw:     raw,
-		})
-		result.Signals = append(result.Signals, scanners.SignalPayload{
-			Source:     "s1",
-			Chain:      chain,
-			Address:    address,
-			Symbol:     symbol,
-			Name:       firstNonEmpty(name, symbol),
-			SignalType: "alpha_discovery",
-			Priority:   priority,
-			Score:      ScoreTier(tier, cg.FDV, isDarling),
-			Reason:     fmt.Sprintf("%s tier - %s", tier, tierReason),
-			Tags:       tags,
-			Raw:        raw,
-			Token: &scanners.TokenPayload{
-				Chain:          chain,
-				Address:        address,
-				Symbol:         symbol,
-				Name:           firstNonEmpty(name, symbol),
-				NarrativeTheme: narrative,
-				NarrativeTags:  tags,
-				Description:    description,
-			},
-			DedupeKey: dedupeKey,
-		})
 	}
-	result.Metadata = map[string]any{"announcement_count": len(announcements), "new_candidates": newCandidates, "warnings": result.Warnings}
-	return result, nil
+	return newCandidates
 }
 
-// fetchAnnouncements 拉取多个 Binance 公告栏目，并按文章 code 去重。
+func (s *Scanner) aggregateProject(ctx context.Context, project *alphaProject) ([]scanners.SignalPayload, []scanners.SnapshotPayload, []string) {
+	signals := []scanners.SignalPayload{}
+	snapshots := []scanners.SnapshotPayload{}
+	warnings := []string{}
+
+	cg, cgWarnings := s.fetchCoinGecko(ctx, project.Symbol)
+	warnings = append(warnings, cgWarnings...)
+	extract, llmWarning := s.extractNarrative(ctx, project.RawText, project.Symbol, project.Name, cg)
+	if llmWarning != "" {
+		warnings = append(warnings, llmWarning)
+	}
+	if extract.ExcludeReason == "already_tge" || extract.ExcludeReason == "meme_only" {
+		project.Excluded = true
+		project.ExcludeReason = extract.ExcludeReason
+		project.Tier = "EXCLUDED"
+		project.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		return signals, snapshots, warnings
+	}
+
+	tier, tierReason := RateProject(cg.MCap, cg.FDV, extract.VCs, extract.Narrative, extract.IsDarling)
+	project.Tier = tier
+	project.TierReason = tierReason
+	project.Narrative = extract.Narrative
+	project.NarrativeDesc = extract.NarrativeDesc
+	project.VCs = extract.VCs
+	project.IsDarling = extract.IsDarling
+	project.OpenPrice = cg.Price
+	project.TotalSupply = cg.TotalSupply
+	project.CirculatingSupply = cg.CirculatingSupply
+	project.FDV = cg.FDV
+	project.CirculatingMCap = cg.MCap
+	project.Chain = MapChain(cg.Chain)
+	project.Contract = strings.ToLower(cg.Contract)
+	project.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if project.Pushes == nil {
+		project.Pushes = map[string]string{}
+	}
+
+	raw := rawForProject(project, "discovery", cg.Price, cg.MCap, cg.FDV, 0)
+	address := projectAddress(*project)
+	chain := firstNonEmpty(project.Chain, "binance_alpha")
+	price := cg.Price
+	mcap := cg.MCap
+	snapshots = append(snapshots, scanners.SnapshotPayload{
+		Source:  "s1",
+		Chain:   chain,
+		Address: address,
+		Symbol:  project.Symbol,
+		Name:    firstNonEmpty(project.Name, project.Symbol),
+		Price:   optionalFloat(price),
+		MC:      optionalFloat(mcap),
+		Raw:     raw,
+	})
+	if _, pushed := project.Pushes["discovery"]; pushed {
+		return signals, snapshots, warnings
+	}
+	project.Pushes["discovery"] = time.Now().UTC().Format(time.RFC3339Nano)
+	signals = append(signals, scanners.SignalPayload{
+		Source:     "s1",
+		Chain:      chain,
+		Address:    address,
+		Symbol:     project.Symbol,
+		Name:       firstNonEmpty(project.Name, project.Symbol),
+		SignalType: "alpha_discovery",
+		Priority:   priorityForTier(tier),
+		Score:      ScoreTier(tier, cg.FDV, extract.IsDarling),
+		Reason:     fmt.Sprintf("%s tier - %s", tier, tierReason),
+		Tags:       tagsForProject(*project, DetectAnnouncementKind(project.RawText)),
+		Raw:        raw,
+		ForcePush:  true,
+		Token: &scanners.TokenPayload{
+			Chain:          chain,
+			Address:        address,
+			Symbol:         project.Symbol,
+			Name:           firstNonEmpty(project.Name, project.Symbol),
+			NarrativeTheme: project.Narrative,
+			NarrativeTags:  tagsForProject(*project, DetectAnnouncementKind(project.RawText)),
+			Description:    firstNonEmpty(project.NarrativeDesc, cg.Description),
+		},
+		DedupeKey: "s1|" + project.ID + "|discovery",
+	})
+	return signals, snapshots, warnings
+}
+
+func (s *Scanner) monitorProjects(ctx context.Context, projects map[string]alphaProject) ([]scanners.SignalPayload, []scanners.SnapshotPayload, []string) {
+	signals := []scanners.SignalPayload{}
+	snapshots := []scanners.SnapshotPayload{}
+	warnings := []string{}
+	now := time.Now().UTC()
+
+	for id, project := range projects {
+		if project.Excluded || project.LaunchTime == "" || project.Tier == "" || project.Tier == "PENDING" || project.Tier == "EXCLUDED" || project.Tier == "ERROR" {
+			continue
+		}
+		launch, err := parseProjectTime(project.LaunchTime)
+		if err != nil {
+			continue
+		}
+		if project.Pushes == nil {
+			project.Pushes = map[string]string{}
+		}
+		delta := launch.Sub(now)
+		minutesToLaunch := int(delta.Minutes())
+
+		if delta >= 3*time.Hour-5*time.Minute && delta <= 3*time.Hour+5*time.Minute {
+			signals = append(signals, project.maybeLifecycleSignal("t_minus_3h", "alpha_countdown", "medium", float64(ScoreTier(project.Tier, project.FDV, project.IsDarling)-8), "T-3h launch reminder", 0, 0, 0, float64(minutesToLaunch))...)
+		} else if delta >= 30*time.Minute-150*time.Second && delta <= 30*time.Minute+150*time.Second {
+			signals = append(signals, project.maybeLifecycleSignal("t_minus_30m", "alpha_countdown", "high", ScoreTier(project.Tier, project.FDV, project.IsDarling), "T-30m launch reminder", 0, 0, 0, float64(minutesToLaunch))...)
+		} else if delta >= -5*time.Minute && delta <= 0 {
+			cg, cgWarnings := s.fetchCoinGecko(ctx, project.Symbol)
+			warnings = append(warnings, cgWarnings...)
+			if cg.Price > 0 {
+				signals = append(signals, project.maybeLifecycleSignal("at_launch", "alpha_launch", "high", ScoreTier(project.Tier, cg.FDV, project.IsDarling)+5, "Token is live", cg.Price, cg.MCap, cg.FDV, 0)...)
+				snapshots = append(snapshots, projectSnapshot(project, cg, "at_launch", 0))
+			}
+		} else if delta < 0 && -delta <= 150*time.Minute {
+			minutesAfter := int((-delta).Minutes())
+			for idx, target := range []int{30, 60, 90, 120} {
+				if absInt(minutesAfter-target) > 5 {
+					continue
+				}
+				pushType := fmt.Sprintf("post_30m_%d", idx+1)
+				if _, ok := project.Pushes[pushType]; ok {
+					continue
+				}
+				cg, cgWarnings := s.fetchCoinGecko(ctx, project.Symbol)
+				warnings = append(warnings, cgWarnings...)
+				if cg.Price <= 0 {
+					break
+				}
+				openPrice := project.OpenPrice
+				if openPrice <= 0 {
+					openPrice = cg.Price
+				}
+				change := 0.0
+				if openPrice > 0 {
+					change = (cg.Price - openPrice) / openPrice * 100
+				}
+				signals = append(signals, project.maybeLifecycleSignal(pushType, "alpha_followup", priorityForFollowup(project.Tier, idx+1), ScoreTier(project.Tier, cg.FDV, project.IsDarling), fmt.Sprintf("+%dmin follow-up %+0.1f%%", target, change), cg.Price, cg.MCap, cg.FDV, change)...)
+				snapshots = append(snapshots, projectSnapshot(project, cg, pushType, change))
+				if change >= 100 {
+					signals = append(signals, project.maybeLifecycleSignal("anomaly_double", "alpha_anomaly", "high", 95, "Market cap doubled after launch", cg.Price, cg.MCap, cg.FDV, change)...)
+				} else if change <= -50 {
+					signals = append(signals, project.maybeLifecycleSignal("anomaly_halve", "alpha_anomaly", "high", 90, "Market cap halved after launch", cg.Price, cg.MCap, cg.FDV, change)...)
+				}
+				break
+			}
+		}
+		project.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		projects[id] = project
+	}
+	return signals, snapshots, warnings
+}
+
+func (p *alphaProject) maybeLifecycleSignal(pushType string, signalType string, priority string, score float64, reason string, price float64, mcap float64, fdv float64, change float64) []scanners.SignalPayload {
+	if p.Pushes == nil {
+		p.Pushes = map[string]string{}
+	}
+	if _, ok := p.Pushes[pushType]; ok {
+		return nil
+	}
+	p.Pushes[pushType] = time.Now().UTC().Format(time.RFC3339Nano)
+	raw := rawForProject(p, pushType, price, mcap, fdv, change)
+	return []scanners.SignalPayload{{
+		Source:     "s1",
+		Chain:      firstNonEmpty(p.Chain, "binance_alpha"),
+		Address:    projectAddress(*p),
+		Symbol:     p.Symbol,
+		Name:       firstNonEmpty(p.Name, p.Symbol),
+		SignalType: signalType,
+		Priority:   priority,
+		Score:      score,
+		Reason:     reason,
+		Tags:       tagsForProject(*p, pushType),
+		Raw:        raw,
+		ForcePush:  true,
+		Token: &scanners.TokenPayload{
+			Chain:          firstNonEmpty(p.Chain, "binance_alpha"),
+			Address:        projectAddress(*p),
+			Symbol:         p.Symbol,
+			Name:           firstNonEmpty(p.Name, p.Symbol),
+			NarrativeTheme: p.Narrative,
+			NarrativeTags:  tagsForProject(*p, pushType),
+			Description:    p.NarrativeDesc,
+		},
+		DedupeKey: "s1|" + p.ID + "|" + pushType,
+	}}
+}
+
+func (s *Scanner) loadProjects() (map[string]alphaProject, error) {
+	projects := map[string]alphaProject{}
+	_, err := scanners.LoadState(s.db, "s1", "projects", &projects)
+	if err != nil {
+		return map[string]alphaProject{}, err
+	}
+	if projects == nil {
+		projects = map[string]alphaProject{}
+	}
+	return projects, nil
+}
+
+func (s *Scanner) saveProjects(projects map[string]alphaProject) error {
+	cutoff := time.Now().UTC().AddDate(0, 0, -14)
+	for id, project := range projects {
+		parsed, err := parseProjectTime(firstNonEmpty(project.UpdatedAt, project.DiscoveredAt))
+		if err == nil && parsed.Before(cutoff) {
+			delete(projects, id)
+		}
+	}
+	return scanners.SaveState(s.db, "s1", "projects", projects)
+}
+
 func (s *Scanner) fetchAnnouncements(ctx context.Context, limit int) ([]article, error) {
 	all := []article{}
 	seen := map[string]bool{}
@@ -192,7 +426,6 @@ func (s *Scanner) fetchAnnouncements(ctx context.Context, limit int) ([]article,
 	return all, nil
 }
 
-// fetchCoinGecko 根据 symbol 查询 CoinGecko，并抽取 S1 需要的市场和叙事字段。
 func (s *Scanner) fetchCoinGecko(ctx context.Context, symbol string) (coinGeckoData, []string) {
 	result := coinGeckoData{}
 	params := url.Values{}
@@ -225,6 +458,8 @@ func (s *Scanner) fetchCoinGecko(ctx context.Context, symbol string) (coinGeckoD
 	result.Price = details.MarketData.CurrentPrice.USD
 	result.FDV = details.MarketData.FullyDilutedValuation.USD
 	result.MCap = details.MarketData.MarketCap.USD
+	result.TotalSupply = details.MarketData.TotalSupply
+	result.CirculatingSupply = details.MarketData.CirculatingSupply
 	result.Categories = details.Categories
 	result.Description = details.Description.EN
 	if len(result.Description) > 500 {
@@ -240,31 +475,274 @@ func (s *Scanner) fetchCoinGecko(ctx context.Context, symbol string) (coinGeckoD
 	return result, nil
 }
 
-// announcementResponse 是 Binance 公告列表接口的最小响应结构。
+func (s *Scanner) extractNarrative(ctx context.Context, rawText string, symbol string, name string, cg coinGeckoData) (narrativeExtract, string) {
+	narrative, desc, vcs, isDarling := InferNarrative(rawText, cg.Categories, cg.Description)
+	fallback := narrativeExtract{
+		Narrative:     narrative,
+		NarrativeDesc: desc,
+		VCs:           vcs,
+		IsDarling:     isDarling,
+	}
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		return fallback, ""
+	}
+
+	payload := map[string]any{
+		"model":       firstNonEmpty(os.Getenv("OPENAI_MODEL"), "gpt-4.1-mini"),
+		"temperature": 0,
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "You are a crypto research analyst. Return JSON only.",
+			},
+			{
+				"role":    "user",
+				"content": llmPrompt(rawText, symbol, name, cg),
+			},
+		},
+		"response_format": map[string]string{"type": "json_object"},
+	}
+	encoded, _ := json.Marshal(payload)
+	baseURL := firstNonEmpty(os.Getenv("OPENAI_BASE_URL"), "https://api.openai.com/v1")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", bytes.NewReader(encoded))
+	if err != nil {
+		return fallback, fmt.Sprintf("llm_request_failed:%s:%v", symbol, err)
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("content-type", "application/json")
+	response, err := s.client.Do(request)
+	if err != nil {
+		return fallback, fmt.Sprintf("llm_call_failed:%s:%v", symbol, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fallback, fmt.Sprintf("llm_call_failed:%s:%s", symbol, response.Status)
+	}
+	var decoded openAIChatResponse
+	if err := json.NewDecoder(response.Body).Decode(&decoded); err != nil {
+		return fallback, fmt.Sprintf("llm_decode_failed:%s:%v", symbol, err)
+	}
+	if len(decoded.Choices) == 0 {
+		return fallback, fmt.Sprintf("llm_empty_response:%s", symbol)
+	}
+	text := strings.TrimSpace(decoded.Choices[0].Message.Content)
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	var extracted narrativeExtract
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &extracted); err != nil {
+		return fallback, fmt.Sprintf("llm_json_failed:%s:%v", symbol, err)
+	}
+	if extracted.Narrative == "" {
+		extracted.Narrative = fallback.Narrative
+	}
+	if extracted.NarrativeDesc == "" {
+		extracted.NarrativeDesc = fallback.NarrativeDesc
+	}
+	if len(extracted.VCs) == 0 {
+		extracted.VCs = fallback.VCs
+	}
+	extracted.IsDarling = extracted.IsDarling || fallback.IsDarling
+	return extracted, ""
+}
+
+func llmPrompt(rawText string, symbol string, name string, cg coinGeckoData) string {
+	return fmt.Sprintf(`Analyze this Binance Alpha/listing project.
+Token: %s
+Name: %s
+Announcement: %s
+CoinGecko categories: %s
+Description: %s
+Market: FDV=%f MCap=%f Price=%f Chain=%s
+
+Return JSON:
+{
+  "narrative": "defi_perp|ai_agent|ai_defi|defai|zk_proof|infra|defi|rwa|gamefi|meme|social|stablecoin|unknown",
+  "narrative_desc": "one short Chinese description",
+  "vcs": ["investor names from categories/announcement"],
+  "is_darling": true,
+  "exclude_reason": null
+}
+
+Use exclude_reason only for "already_tge" or "meme_only".`, symbol, name, rawText, strings.Join(cg.Categories, ", "), cg.Description, cg.FDV, cg.MCap, cg.Price, cg.Chain)
+}
+
+func rawForProject(project *alphaProject, pushType string, price float64, mcap float64, fdv float64, change float64) map[string]any {
+	if price == 0 {
+		price = project.OpenPrice
+	}
+	if mcap == 0 {
+		mcap = project.CirculatingMCap
+	}
+	if fdv == 0 {
+		fdv = project.FDV
+	}
+	return map[string]any{
+		"project_id":          project.ID,
+		"title":               project.RawText,
+		"fdv":                 fdv,
+		"mcap":                mcap,
+		"price":               price,
+		"change_pct":          change,
+		"vcs":                 project.VCs,
+		"is_darling":          project.IsDarling,
+		"tier":                project.Tier,
+		"tier_reason":         project.TierReason,
+		"narrative":           project.Narrative,
+		"narrative_desc":      project.NarrativeDesc,
+		"launch_time":         project.LaunchTime,
+		"launch_date":         launchDateFromTime(project.LaunchTime),
+		"push_type":           pushType,
+		"announcement_kind":   DetectAnnouncementKind(project.RawText),
+		"total_supply":        project.TotalSupply,
+		"circulating_supply":  project.CirculatingSupply,
+		"circulating_mcap":    mcap,
+		"initial_float_ratio": floatRatio(project.CirculatingSupply, project.TotalSupply),
+	}
+}
+
+func projectSnapshot(project alphaProject, cg coinGeckoData, pushType string, change float64) scanners.SnapshotPayload {
+	raw := rawForProject(&project, pushType, cg.Price, cg.MCap, cg.FDV, change)
+	return scanners.SnapshotPayload{
+		Source:  "s1",
+		Chain:   firstNonEmpty(project.Chain, "binance_alpha"),
+		Address: projectAddress(project),
+		Symbol:  project.Symbol,
+		Name:    firstNonEmpty(project.Name, project.Symbol),
+		Price:   optionalFloat(cg.Price),
+		MC:      optionalFloat(cg.MCap),
+		Raw:     raw,
+	}
+}
+
+func tagsForProject(project alphaProject, extra string) []string {
+	tags := []string{DetectAnnouncementKind(project.RawText), project.Tier, project.Narrative}
+	if extra != "" {
+		tags = append(tags, extra)
+	}
+	for _, vc := range firstN(project.VCs, 3) {
+		tags = append(tags, strings.ReplaceAll(strings.ToLower(vc), " ", "_"))
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	return out
+}
+
+func projectAddress(project alphaProject) string {
+	if strings.TrimSpace(project.Contract) != "" {
+		return strings.ToLower(project.Contract)
+	}
+	return strings.ToLower(project.Symbol + "_" + launchDateFromTime(project.LaunchTime))
+}
+
+func releaseTimes(releaseDate int64) (string, string) {
+	if releaseDate <= 0 {
+		now := time.Now().UTC()
+		return now.Format(time.RFC3339Nano), now.Format("2006-01-02")
+	}
+	t := time.UnixMilli(releaseDate).UTC()
+	return t.Format(time.RFC3339Nano), t.Format("2006-01-02")
+}
+
+func ProjectID(symbol string, date string) string {
+	sum := md5.Sum([]byte(strings.ToUpper(symbol) + "_" + date))
+	return fmt.Sprintf("%x", sum)[:16]
+}
+
+func parseProjectTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty time")
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unsupported time %q", value)
+}
+
+func launchDateFromTime(value string) string {
+	parsed, err := parseProjectTime(value)
+	if err != nil {
+		return time.Now().UTC().Format("2006-01-02")
+	}
+	return parsed.Format("2006-01-02")
+}
+
+func priorityForTier(tier string) string {
+	switch tier {
+	case "S", "A":
+		return "high"
+	case "B":
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func priorityForFollowup(tier string, idx int) string {
+	if tier == "S" || tier == "A" || idx == 1 {
+		return "high"
+	}
+	return "medium"
+}
+
+func countActiveProjects(projects map[string]alphaProject) int {
+	count := 0
+	for _, project := range projects {
+		if !project.Excluded && project.LaunchTime != "" && project.Tier != "" && project.Tier != "PENDING" && project.Tier != "EXCLUDED" && project.Tier != "ERROR" {
+			count++
+		}
+	}
+	return count
+}
+
+func floatRatio(num float64, den float64) float64 {
+	if den <= 0 {
+		return 0
+	}
+	return num / den * 100
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
 type announcementResponse struct {
-	Data struct { // Data.Catalogs 保存公告栏目和栏目下文章列表。
+	Data struct {
 		Catalogs []struct {
 			Articles []article `json:"articles"`
 		} `json:"catalogs"`
 	} `json:"data"`
 }
 
-// coinGeckoSearchResponse 是 CoinGecko 搜索接口的最小响应结构。
 type coinGeckoSearchResponse struct {
-	Coins []struct { // Coins 是搜索命中的候选币种，S1 会优先匹配 symbol 相等的项。
+	Coins []struct {
 		ID     string `json:"id"`
 		Symbol string `json:"symbol"`
 	} `json:"coins"`
 }
 
-// coinGeckoDetailsResponse 是 CoinGecko 币种详情接口的最小响应结构。
 type coinGeckoDetailsResponse struct {
-	Categories  []string `json:"categories"` // Categories 是 CoinGecko 分类，参与叙事识别。
-	Description struct { // Description 保存多语言简介，这里只读取英文简介。
+	Categories  []string `json:"categories"`
+	Description struct {
 		EN string `json:"en"`
 	} `json:"description"`
-	Platforms  map[string]string `json:"platforms"` // Platforms 是链名到合约地址的映射。
-	MarketData struct { // MarketData 保存价格、市值和 FDV。
+	Platforms  map[string]string `json:"platforms"`
+	MarketData struct {
 		CurrentPrice struct {
 			USD float64 `json:"usd"`
 		} `json:"current_price"`
@@ -274,10 +752,19 @@ type coinGeckoDetailsResponse struct {
 		MarketCap struct {
 			USD float64 `json:"usd"`
 		} `json:"market_cap"`
+		TotalSupply       float64 `json:"total_supply"`
+		CirculatingSupply float64 `json:"circulating_supply"`
 	} `json:"market_data"`
 }
 
-// firstN 返回最多 count 个字符串，用于控制标签数量。
+type openAIChatResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
 func firstN(values []string, count int) []string {
 	if len(values) <= count {
 		return values
@@ -285,7 +772,6 @@ func firstN(values []string, count int) []string {
 	return values[:count]
 }
 
-// firstNonEmpty 返回第一项非空字符串。
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -295,7 +781,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// optionalFloat 将 0 视作缺失值，避免把未知市场数据写成有效 0。
 func optionalFloat(value float64) *float64 {
 	if value == 0 {
 		return nil

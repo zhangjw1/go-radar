@@ -15,6 +15,8 @@ func StoreSnapshot(db *gorm.DB, payload SnapshotPayload) error {
 	if err != nil {
 		return err
 	}
+	token.Symbol = strings.ToUpper(payload.Symbol)
+	token.Name = betterTokenName(token.Name, payload.Name, token.Symbol)
 	token.LastSeenAt = nowString()
 	if err := db.Save(&token).Error; err != nil {
 		return err
@@ -53,7 +55,7 @@ func StoreSignalEvent(db *gorm.DB, payload SignalPayload, bucketMinutes int) (*m
 	}
 	if payload.Token != nil {
 		token.Symbol = strings.ToUpper(payload.Token.Symbol)
-		token.Name = firstNonEmpty(payload.Token.Name, token.Name)
+		token.Name = betterTokenName(token.Name, payload.Token.Name, token.Symbol)
 		token.NarrativeTheme = firstNonEmpty(payload.Token.NarrativeTheme, token.NarrativeTheme)
 		token.NarrativeTagsJSON = jsonString(payload.Token.NarrativeTags)
 		if payload.Token.SocialLinksJSON != "" {
@@ -92,7 +94,7 @@ func StoreSignalEvent(db *gorm.DB, payload SignalPayload, bucketMinutes int) (*m
 		Score:      payload.Score,
 		Reason:     payload.Reason,
 		TagsJSON:   jsonString(payload.Tags),
-		RawJSON:    jsonString(payload.Raw),
+		RawJSON:    jsonString(withForcePush(payload.Raw, payload.ForcePush)),
 		DedupeKey:  dedupeKey,
 		CreatedAt:  nowString(),
 	}
@@ -116,9 +118,10 @@ func DedupeExists(db *gorm.DB, dedupeKey string) (bool, error) {
 
 func RecentFundingSnapshot(db *gorm.DB, chain string, address string, source string) (*model.TokenSnapshot, error) {
 	var snapshot model.TokenSnapshot
-	err := db.Joins("JOIN tokens ON snapshots.token_id = tokens.id").
-		Where("tokens.chain = ? AND tokens.address = ? AND snapshots.source = ?", strings.ToLower(chain), NormalizeAddress(address), source).
-		Order("snapshots.created_at desc").
+	join := "JOIN t_radar_token ON t_radar_market_snapshot.token_id = t_radar_token.id"
+	err := db.Joins(join).
+		Where("t_radar_token.chain = ? AND t_radar_token.address = ? AND t_radar_market_snapshot.source = ?", strings.ToLower(chain), NormalizeAddress(address), source).
+		Order("t_radar_market_snapshot.created_at desc").
 		Limit(1).
 		First(&snapshot).Error
 	if err == gorm.ErrRecordNotFound {
@@ -193,6 +196,18 @@ func jsonString(value any) string {
 	return string(encoded)
 }
 
+func withForcePush(raw map[string]any, forcePush bool) map[string]any {
+	if !forcePush {
+		return raw
+	}
+	out := map[string]any{}
+	for key, value := range raw {
+		out[key] = value
+	}
+	out["force_push"] = true
+	return out
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -200,4 +215,20 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func betterTokenName(current string, incoming string, symbol string) string {
+	current = strings.TrimSpace(current)
+	incoming = strings.TrimSpace(incoming)
+	symbol = strings.TrimSpace(symbol)
+	if incoming == "" {
+		return current
+	}
+	if current == "" || strings.EqualFold(current, symbol) {
+		return incoming
+	}
+	if !strings.EqualFold(incoming, symbol) {
+		return incoming
+	}
+	return current
 }

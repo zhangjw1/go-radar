@@ -29,7 +29,17 @@ func NewScanner(db *gorm.DB) *Scanner {
 	}
 }
 
-// Scan 执行一次 S2 扫描：读取合约列表、资金费率、成交量、OI，并输出快照和反转信号。
+/*
+  - 热度做多雷达 v2 — 热度+费率+OI 三维扫描
+
+核心逻辑（拉哪模式）：
+1. 热度先行 → CG热搜+放量=资金涌入信号
+2. 负费率=空头燃料，庄家拉盘爆空单
+3. OI暴涨=大资金建仓=即将拉盘
+
+单策略：发现热度→小仓做多→严格止损→拿住赢家
+数据源：币安合约API + CoinGecko Trending（零成本）
+*/
 func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	result := scanners.Result{ScannerName: "s2", Metadata: map[string]any{}}
 
@@ -66,7 +76,7 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 		}
 	}
 
-	marketCaps, warnings := s.fetchMarketCaps(ctx)
+	marketData, warnings := s.fetchMarketData(ctx)
 	result.Warnings = append(result.Warnings, warnings...)
 	spotSymbols, warnings := s.fetchSpotSymbols(ctx)
 	result.Warnings = append(result.Warnings, warnings...)
@@ -107,7 +117,13 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			value := *previousFunding[symbol] * 100
 			previousFRPct = &value
 		}
+		currentFRRaw := currentFunding[symbol]
+		flipDirection, positionDirection, flipLabel := FundingFlipDirection(previousFunding[symbol], &currentFRRaw)
 		hasSpot := spotSymbols[baseSymbol]
+		squarePosts, squareViews, squareWarning := s.getSquareDiscussion(ctx, baseSymbol)
+		if squareWarning != "" {
+			result.Warnings = append(result.Warnings, squareWarning)
+		}
 		var currentOIUSD *float64
 		var oiChange *float64
 		segments := []float64{}
@@ -129,13 +145,14 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			}
 		}
 
-		marketCap := marketCaps[baseSymbol]
+		marketCap := marketData.Caps[baseSymbol]
+		projectName := marketData.DisplayName(baseSymbol)
 		result.Snapshots = append(result.Snapshots, scanners.SnapshotPayload{
 			Source:     "s2",
 			Chain:      "binance_perp",
 			Address:    strings.ToLower(symbol),
 			Symbol:     baseSymbol,
-			Name:       baseSymbol,
+			Name:       projectName,
 			Price:      &price,
 			MC:         marketCap,
 			Volume:     &volumeUSD,
@@ -144,11 +161,18 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			OID6H:      oiChange,
 			Raw: map[string]any{
 				"symbol":               symbol,
+				"project_name":         projectName,
+				"market_identifier":    strings.ToLower(symbol),
 				"price_change_24h":     priceChange24h,
 				"oi_segments":          segments,
 				"previous_funding_pct": previousFRPct,
 				"current_funding_pct":  currentFRPct,
+				"funding_flip":         flipDirection,
+				"funding_flip_label":   flipLabel,
+				"position_direction":   positionDirection,
 				"has_spot":             hasSpot,
+				"square_posts":         squarePosts,
+				"square_views":         squareViews,
 			},
 		})
 
@@ -165,31 +189,39 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 		}
 		raw := map[string]any{
 			"symbol":               symbol,
+			"project_name":         projectName,
+			"market_identifier":    strings.ToLower(symbol),
 			"price_change_24h":     priceChange24h,
 			"oi_segments":          segments,
 			"previous_funding_pct": previousFRPct,
 			"current_funding_pct":  currentFRPct,
+			"funding_flip":         flipDirection,
+			"funding_flip_label":   flipLabel,
+			"position_direction":   positionDirection,
 			"oi_change_pct":        *oiChange,
 			"volume_usd":           volumeUSD,
 			"has_spot":             hasSpot,
+			"square_posts":         squarePosts,
+			"square_views":         squareViews,
 		}
 		result.Signals = append(result.Signals, scanners.SignalPayload{
 			Source:     "s2",
 			Chain:      "binance_perp",
 			Address:    strings.ToLower(symbol),
 			Symbol:     baseSymbol,
-			Name:       baseSymbol,
+			Name:       projectName,
 			SignalType: "funding_flip_oi_rising",
 			Priority:   priority,
 			Score:      ScoreFundingSignal(currentFRPct, *oiChange, hasSpot, volumeUSD),
-			Reason:     fmt.Sprintf("Funding flipped from %s%% to %+0.3f%%, OI %+0.1f%%", formatOptional(previousFRPct), currentFRPct, *oiChange),
+			Reason:     fmt.Sprintf("Funding %s/%s from %s%% to %+0.3f%%, OI %+0.1f%%", flipLabel, positionDirection, formatOptional(previousFRPct), currentFRPct, *oiChange),
 			Tags:       tags,
+			ForcePush:  true,
 			Raw:        raw,
 			Token: &scanners.TokenPayload{
 				Chain:          "binance_perp",
 				Address:        strings.ToLower(symbol),
 				Symbol:         baseSymbol,
-				Name:           baseSymbol,
+				Name:           projectName,
 				NarrativeTheme: strings.ToLower(baseSymbol),
 				NarrativeTags:  tags,
 			},
@@ -204,21 +236,27 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	return result, nil
 }
 
-// fetchMarketCaps 从 Binance 营销接口补充币种市值，用于 S2 页面和评分参考。
-func (s *Scanner) fetchMarketCaps(ctx context.Context) (map[string]*float64, []string) {
+// fetchMarketData 从 Binance 营销接口补充币种市值和项目全称，用于 S2 页面和评分参考。
+func (s *Scanner) fetchMarketData(ctx context.Context) (binanceMarketData, []string) {
 	var response marketCapsResponse
 	if err := s.getJSON(ctx, "https://www.binance.com/bapi/composite/v1/public/marketing/symbol/list", nil, &response); err != nil {
-		return map[string]*float64{}, []string{fmt.Sprintf("market_caps_failed:%v", err)}
+		return newBinanceMarketData(), []string{fmt.Sprintf("market_data_failed:%v", err)}
 	}
-	marketCaps := make(map[string]*float64)
+	marketData := newBinanceMarketData()
 	for _, item := range response.Data {
-		if item.Name == "" || item.MarketCap == nil {
+		symbol := strings.ToUpper(strings.TrimSpace(item.Name))
+		if symbol == "" {
 			continue
 		}
-		value := *item.MarketCap
-		marketCaps[item.Name] = &value
+		if item.MarketCap != nil {
+			value := *item.MarketCap
+			marketData.Caps[symbol] = &value
+		}
+		if projectName := firstNonEmpty(item.FullName, item.AssetName, item.DisplayName, item.Title); projectName != "" {
+			marketData.Names[symbol] = projectName
+		}
 	}
-	return marketCaps, nil
+	return marketData, nil
 }
 
 // fetchSpotSymbols 读取 Binance 现货列表，用于判断合约标的是否也有现货市场。
@@ -289,9 +327,33 @@ type premiumIndexItem struct {
 // marketCapsResponse 是 Binance 市值补充接口的最小响应结构。
 type marketCapsResponse struct {
 	Data []struct { // Data 是币种市值列表。
-		Name      string   `json:"name"`
-		MarketCap *float64 `json:"marketCap"`
+		Name        string   `json:"name"`
+		FullName    string   `json:"fullName"`
+		AssetName   string   `json:"assetName"`
+		DisplayName string   `json:"displayName"`
+		Title       string   `json:"title"`
+		MarketCap   *float64 `json:"marketCap"`
 	} `json:"data"`
+}
+
+type binanceMarketData struct {
+	Caps  map[string]*float64
+	Names map[string]string
+}
+
+func newBinanceMarketData() binanceMarketData {
+	return binanceMarketData{
+		Caps:  map[string]*float64{},
+		Names: map[string]string{},
+	}
+}
+
+func (m binanceMarketData) DisplayName(symbol string) string {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if name := strings.TrimSpace(m.Names[symbol]); name != "" {
+		return name
+	}
+	return symbol
 }
 
 // spotExchangeInfoResponse 是 Binance 现货交易规则接口的最小响应结构。
@@ -314,4 +376,33 @@ func formatOptional(value *float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%+0.3f", *value)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func (s *Scanner) getSquareDiscussion(ctx context.Context, coin string) (int64, int64, string) {
+	params := url.Values{}
+	params.Set("hashtag", "#"+strings.ToLower(coin))
+	params.Set("pageIndex", "1")
+	params.Set("pageSize", "1")
+	params.Set("orderBy", "HOT")
+	var response struct {
+		Data struct {
+			Hashtag struct {
+				ContentCount int64 `json:"contentCount"`
+				ViewCount    int64 `json:"viewCount"`
+			} `json:"hashtag"`
+		} `json:"data"`
+	}
+	if err := s.getJSON(ctx, "https://www.binance.com/bapi/composite/v4/friendly/pgc/content/queryByHashtag", params, &response); err != nil {
+		return 0, 0, fmt.Sprintf("square_discussion_failed:%s:%v", coin, err)
+	}
+	return response.Data.Hashtag.ContentCount, response.Data.Hashtag.ViewCount, ""
 }

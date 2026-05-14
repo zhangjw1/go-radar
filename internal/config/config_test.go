@@ -23,6 +23,19 @@ func TestSQLitePathFromURLRejectsUnsupportedURL(t *testing.T) {
 	}
 }
 
+func TestParseDatabaseURLSupportsPostgres(t *testing.T) {
+	driver, value, err := ParseDatabaseURL("postgres://user:pass@127.0.0.1:5432/go_radar?sslmode=disable", ".")
+	if err != nil {
+		t.Fatalf("ParseDatabaseURL returned error: %v", err)
+	}
+	if driver != DBDriverPostgres {
+		t.Fatalf("expected postgres driver, got %q", driver)
+	}
+	if value != "postgres://user:pass@127.0.0.1:5432/go_radar?sslmode=disable" {
+		t.Fatalf("unexpected postgres value: %q", value)
+	}
+}
+
 func TestLoadWorksWithoutEnvFile(t *testing.T) {
 	tempDir := t.TempDir()
 	previousDir, err := os.Getwd()
@@ -48,6 +61,9 @@ func TestLoadWorksWithoutEnvFile(t *testing.T) {
 	}
 	if settings.DatabasePath != filepath.Join(tempDir, "radar.db") {
 		t.Fatalf("unexpected database path: %q", settings.DatabasePath)
+	}
+	if settings.DatabaseDriver != DBDriverSQLite {
+		t.Fatalf("expected sqlite driver, got %q", settings.DatabaseDriver)
 	}
 	if !settings.AutoMigrate {
 		t.Fatal("expected auto migration to be enabled by default")
@@ -75,6 +91,9 @@ func TestLoadSupportsExplicitEnvFile(t *testing.T) {
 	}
 	if settings.DatabasePath != filepath.Join(tempDir, "local.db") {
 		t.Fatalf("unexpected database path: %q", settings.DatabasePath)
+	}
+	if settings.DatabaseDriver != DBDriverSQLite {
+		t.Fatalf("expected sqlite driver, got %q", settings.DatabaseDriver)
 	}
 }
 

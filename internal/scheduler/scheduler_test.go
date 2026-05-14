@@ -28,6 +28,36 @@ func TestSpecsReadIntervalsFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestSpecsUseDefaultIntervals(t *testing.T) {
+	t.Setenv("SCAN_INTERVAL_S1", "")
+	t.Setenv("SCAN_INTERVAL_S2", "")
+	t.Setenv("SCAN_INTERVAL_S3", "")
+	t.Setenv("SCAN_INTERVAL_S5", "")
+	t.Setenv("SCAN_INTERVAL_S7", "")
+
+	scheduler := New(nil, false)
+	expected := map[string]int{
+		"s1": 3600,
+		"s2": 1800,
+		"s3": 1800,
+		"s5": 600,
+		"s7": 1800,
+	}
+	for _, spec := range scheduler.Specs() {
+		want, ok := expected[spec.Name]
+		if !ok {
+			continue
+		}
+		if spec.IntervalSeconds != want {
+			t.Fatalf("expected %s interval %d, got %d", spec.Name, want, spec.IntervalSeconds)
+		}
+		delete(expected, spec.Name)
+	}
+	if len(expected) > 0 {
+		t.Fatalf("missing scheduler specs: %#v", expected)
+	}
+}
+
 func TestSpecsReadRuntimeIntervalsFromSettings(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

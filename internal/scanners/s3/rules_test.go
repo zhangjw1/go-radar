@@ -14,23 +14,16 @@ func TestDetectVolumeSurge(t *testing.T) {
 }
 
 func TestBuildSignalTypes(t *testing.T) {
-	types := BuildSignalTypes(50, 5.2, -0.05, 3)
-	for _, want := range []string{"heat", "heat_plus_oi", "heat_plus_negative_funding"} {
-		if !contains(types, want) {
-			t.Fatalf("expected %s in %#v", want, types)
-		}
+	types := BuildSignalTypes(50, 5.2, -0.05, true, 3)
+	if len(types) != 1 || types[0] != "heat_plus_oi_negative_funding" {
+		t.Fatalf("expected combined heat/oi/funding signal, got %#v", types)
 	}
-	types = BuildSignalTypes(0, 9, 0.01, 3)
+	types = BuildSignalTypes(50, 5.2, -0.05, false, 3)
+	if len(types) != 1 || types[0] != "heat_plus_oi" {
+		t.Fatalf("expected funding-missing signal to ignore negative funding, got %#v", types)
+	}
+	types = BuildSignalTypes(0, 9, 0.01, true, 3)
 	if len(types) != 1 || types[0] != "oi_anomaly" {
 		t.Fatalf("expected pure oi anomaly, got %#v", types)
 	}
-}
-
-func contains(items []string, value string) bool {
-	for _, item := range items {
-		if item == value {
-			return true
-		}
-	}
-	return false
 }
