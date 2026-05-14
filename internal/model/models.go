@@ -1,14 +1,5 @@
 package model
 
-const (
-	TableRadarToken          = "t_radar_token"
-	TableRadarMarketSnapshot = "t_radar_market_snapshot"
-	TableRadarSignalEvent    = "t_radar_signal_event"
-	TableRadarWatchlist      = "t_radar_watchlist"
-	TableRadarScannerRun     = "t_radar_scanner_run"
-	TableSysAppSetting       = "t_sys_app_setting"
-)
-
 type TokenProfile struct {
 	ID                int64  `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
 	Chain             string `gorm:"column:chain;size:64;not null;index:idx_radar_token_chain_address,priority:1;comment:链或市场标识" json:"chain"`
@@ -24,7 +15,7 @@ type TokenProfile struct {
 }
 
 func (TokenProfile) TableName() string {
-	return TableRadarToken
+	return "t_radar_token"
 }
 
 type TokenSnapshot struct {
@@ -48,7 +39,7 @@ type TokenSnapshot struct {
 }
 
 func (TokenSnapshot) TableName() string {
-	return TableRadarMarketSnapshot
+	return "t_radar_market_snapshot"
 }
 
 type SignalEvent struct {
@@ -71,7 +62,7 @@ type SignalEvent struct {
 }
 
 func (SignalEvent) TableName() string {
-	return TableRadarSignalEvent
+	return "t_radar_signal_event"
 }
 
 type WatchlistItem struct {
@@ -86,7 +77,7 @@ type WatchlistItem struct {
 }
 
 func (WatchlistItem) TableName() string {
-	return TableRadarWatchlist
+	return "t_radar_watchlist"
 }
 
 type ScannerRun struct {
@@ -102,7 +93,7 @@ type ScannerRun struct {
 }
 
 func (ScannerRun) TableName() string {
-	return TableRadarScannerRun
+	return "t_radar_scanner_run"
 }
 
 type AppSetting struct {
@@ -112,5 +103,5 @@ type AppSetting struct {
 }
 
 func (AppSetting) TableName() string {
-	return TableSysAppSetting
+	return "t_sys_app_setting"
 }

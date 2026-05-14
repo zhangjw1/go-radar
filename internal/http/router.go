@@ -808,7 +808,7 @@ func applySignalFilters(query *gorm.DB, filters SignalFilters) *gorm.DB {
 		query = query.Where("priority = ?", filters.Priority)
 	}
 	if filters.WatchlistOnly {
-		join := "JOIN " + model.TableRadarWatchlist + " ON " + model.TableRadarWatchlist + ".chain = " + model.TableRadarSignalEvent + ".chain AND " + model.TableRadarWatchlist + ".address = " + model.TableRadarSignalEvent + ".address"
+		join := "JOIN t_radar_watchlist ON t_radar_watchlist.chain = t_radar_signal_event.chain AND t_radar_watchlist.address = t_radar_signal_event.address"
 		query = query.Joins(join)
 	}
 	return query
@@ -850,10 +850,10 @@ func (s *Server) sourceCounts(hours int) map[string]int64 {
 
 func (s *Server) watchlistHitCount(hours int) int64 {
 	var count int64
-	join := "JOIN " + model.TableRadarWatchlist + " ON " + model.TableRadarWatchlist + ".chain = " + model.TableRadarSignalEvent + ".chain AND " + model.TableRadarWatchlist + ".address = " + model.TableRadarSignalEvent + ".address"
+	join := "JOIN t_radar_watchlist ON t_radar_watchlist.chain = t_radar_signal_event.chain AND t_radar_watchlist.address = t_radar_signal_event.address"
 	_ = s.db.Model(&model.SignalEvent{}).
 		Joins(join).
-		Where(model.TableRadarSignalEvent+".created_at >= ?", time.Now().UTC().Add(-time.Duration(hours)*time.Hour).Format(time.RFC3339Nano)).
+		Where("t_radar_signal_event.created_at >= ?", time.Now().UTC().Add(-time.Duration(hours)*time.Hour).Format(time.RFC3339Nano)).
 		Count(&count).Error
 	return count
 }
@@ -1404,7 +1404,7 @@ func defaultSettingValue(key string) any {
 	case "insider_monitor_engine":
 		return firstNonEmpty(os.Getenv("INSIDER_MONITOR_ENGINE"), "service")
 	case "gmgn_timeout_seconds":
-		return envFloat("GMGN_TIMEOUT_SECONDS", 6)
+		return envFloat("GMGN_TIMEOUT_SECONDS", 15)
 	case "s5_min_gain_pct":
 		return envFloat("S5_MIN_GAIN_PCT", 5)
 	case "s5_min_mc":

@@ -29,7 +29,17 @@ func NewScanner(db *gorm.DB) *Scanner {
 	}
 }
 
-// Scan 执行一次 S2 扫描：读取合约列表、资金费率、成交量、OI，并输出快照和反转信号。
+/*
+  - 热度做多雷达 v2 — 热度+费率+OI 三维扫描
+
+核心逻辑（拉哪模式）：
+1. 热度先行 → CG热搜+放量=资金涌入信号
+2. 负费率=空头燃料，庄家拉盘爆空单
+3. OI暴涨=大资金建仓=即将拉盘
+
+单策略：发现热度→小仓做多→严格止损→拿住赢家
+数据源：币安合约API + CoinGecko Trending（零成本）
+*/
 func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 	result := scanners.Result{ScannerName: "s2", Metadata: map[string]any{}}
 

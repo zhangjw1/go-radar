@@ -172,7 +172,7 @@ func (s *Scheduler) runScanner(name string, scan func(context.Context) (scanners
 	signalCount := 0
 	pushedCount := 0
 	resonanceCount := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	logInfo("scanner %s started", name)
 	defer func() {

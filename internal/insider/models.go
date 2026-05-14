@@ -3,17 +3,6 @@ package insider
 import "time"
 
 const (
-	TableInsiderWallet              = "t_insider_wallet"
-	TableInsiderTokenAccount        = "t_insider_token_account"
-	TableInsiderTransaction         = "t_insider_transaction"
-	TableInsiderPriceRecord         = "t_insider_price_record"
-	TableInsiderAlertRule           = "t_insider_alert_rule"
-	TableInsiderAlertHistory        = "t_insider_alert_history"
-	TableInsiderWalletSnapshot      = "t_insider_wallet_snapshot"
-	TableInsiderNotificationChannel = "t_insider_notification_channel"
-)
-
-const (
 	EngineService = "service"
 	EngineLegacy  = "legacy"
 
@@ -31,7 +20,7 @@ type Wallet struct {
 	UpdatedAt time.Time `gorm:"column:updated_at;comment:更新时间" json:"updated_at"`
 }
 
-func (Wallet) TableName() string { return TableInsiderWallet }
+func (Wallet) TableName() string { return "t_insider_wallet" }
 
 func (w Wallet) LabelOrAddress() string {
 	if w.Label != "" {
@@ -51,7 +40,7 @@ type TokenAccount struct {
 	LastUpdated time.Time `gorm:"column:last_updated;comment:最近更新时间" json:"last_updated"`
 }
 
-func (TokenAccount) TableName() string { return TableInsiderTokenAccount }
+func (TokenAccount) TableName() string { return "t_insider_token_account" }
 
 type TokenHolding struct {
 	MintAddress  string  `json:"mint_address"`
@@ -82,7 +71,7 @@ type Transaction struct {
 	CreatedAt   time.Time `gorm:"column:created_at;comment:创建时间" json:"created_at"`
 }
 
-func (Transaction) TableName() string { return TableInsiderTransaction }
+func (Transaction) TableName() string { return "t_insider_transaction" }
 
 type PriceRecord struct {
 	ID          int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
@@ -92,7 +81,7 @@ type PriceRecord struct {
 	RecordedAt  time.Time `gorm:"column:recorded_at;index;comment:记录时间" json:"recorded_at"`
 }
 
-func (PriceRecord) TableName() string { return TableInsiderPriceRecord }
+func (PriceRecord) TableName() string { return "t_insider_price_record" }
 
 type AlertRule struct {
 	ID             int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
@@ -107,7 +96,7 @@ type AlertRule struct {
 	ChannelIDs     []int64   `gorm:"-" json:"channel_ids"`
 }
 
-func (AlertRule) TableName() string { return TableInsiderAlertRule }
+func (AlertRule) TableName() string { return "t_insider_alert_rule" }
 
 type AlertHistory struct {
 	ID          int64          `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
@@ -122,7 +111,7 @@ type AlertHistory struct {
 	Data        map[string]any `gorm:"-" json:"data"`
 }
 
-func (AlertHistory) TableName() string { return TableInsiderAlertHistory }
+func (AlertHistory) TableName() string { return "t_insider_alert_history" }
 
 type WalletSnapshot struct {
 	ID              int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
@@ -132,7 +121,7 @@ type WalletSnapshot struct {
 	CreatedAt       time.Time `gorm:"column:created_at;index;comment:创建时间" json:"created_at"`
 }
 
-func (WalletSnapshot) TableName() string { return TableInsiderWalletSnapshot }
+func (WalletSnapshot) TableName() string { return "t_insider_wallet_snapshot" }
 
 type NotificationChannel struct {
 	ID          int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
@@ -147,7 +136,7 @@ type NotificationChannel struct {
 	UpdatedAt   time.Time `gorm:"column:updated_at;comment:更新时间" json:"updated_at"`
 }
 
-func (NotificationChannel) TableName() string { return TableInsiderNotificationChannel }
+func (NotificationChannel) TableName() string { return "t_insider_notification_channel" }
 
 type Analytics struct {
 	WalletID        int64      `json:"wallet_id"`

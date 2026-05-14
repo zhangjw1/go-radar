@@ -116,10 +116,10 @@ func DedupeExists(db *gorm.DB, dedupeKey string) (bool, error) {
 
 func RecentFundingSnapshot(db *gorm.DB, chain string, address string, source string) (*model.TokenSnapshot, error) {
 	var snapshot model.TokenSnapshot
-	join := "JOIN " + model.TableRadarToken + " ON " + model.TableRadarMarketSnapshot + ".token_id = " + model.TableRadarToken + ".id"
+	join := "JOIN t_radar_token ON t_radar_market_snapshot.token_id = t_radar_token.id"
 	err := db.Joins(join).
-		Where(model.TableRadarToken+".chain = ? AND "+model.TableRadarToken+".address = ? AND "+model.TableRadarMarketSnapshot+".source = ?", strings.ToLower(chain), NormalizeAddress(address), source).
-		Order(model.TableRadarMarketSnapshot + ".created_at desc").
+		Where("t_radar_token.chain = ? AND t_radar_token.address = ? AND t_radar_market_snapshot.source = ?", strings.ToLower(chain), NormalizeAddress(address), source).
+		Order("t_radar_market_snapshot.created_at desc").
 		Limit(1).
 		First(&snapshot).Error
 	if err == gorm.ErrRecordNotFound {
