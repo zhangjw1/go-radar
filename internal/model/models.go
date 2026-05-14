@@ -105,3 +105,19 @@ type AppSetting struct {
 func (AppSetting) TableName() string {
 	return "t_sys_app_setting"
 }
+
+// ScannerState 保存扫描器自己的轻量状态。
+//
+// 业务上它用于替代 Python 版本里的本地 JSON/SQLite 状态文件，例如：
+// S1 的 Alpha 项目生命周期、S3 的热度历史、S5 的动量推送计数。
+type ScannerState struct {
+	ID        int64  `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	Source    string `gorm:"column:source;size:32;not null;index:idx_radar_scanner_state_source_key,priority:1;comment:扫描器编号" json:"source"`
+	Key       string `gorm:"column:key;size:255;not null;index:idx_radar_scanner_state_source_key,priority:2;comment:状态键" json:"key"`
+	ValueJSON string `gorm:"column:value_json;type:text;not null;default:'{}';comment:状态内容JSON" json:"value_json"`
+	UpdatedAt string `gorm:"column:updated_at;size:40;not null;default:'';index;comment:更新时间RFC3339Nano" json:"updated_at"`
+}
+
+func (ScannerState) TableName() string {
+	return "t_radar_scanner_state"
+}

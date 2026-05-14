@@ -92,7 +92,7 @@ func StoreSignalEvent(db *gorm.DB, payload SignalPayload, bucketMinutes int) (*m
 		Score:      payload.Score,
 		Reason:     payload.Reason,
 		TagsJSON:   jsonString(payload.Tags),
-		RawJSON:    jsonString(payload.Raw),
+		RawJSON:    jsonString(withForcePush(payload.Raw, payload.ForcePush)),
 		DedupeKey:  dedupeKey,
 		CreatedAt:  nowString(),
 	}
@@ -192,6 +192,18 @@ func jsonString(value any) string {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+func withForcePush(raw map[string]any, forcePush bool) map[string]any {
+	if !forcePush {
+		return raw
+	}
+	out := map[string]any{}
+	for key, value := range raw {
+		out[key] = value
+	}
+	out["force_push"] = true
+	return out
 }
 
 func firstNonEmpty(values ...string) string {

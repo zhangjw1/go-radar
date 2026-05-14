@@ -27,6 +27,7 @@ var (
 
 var s3TypeLabels = map[string]string{
 	"heat":                       "热度信号",
+	"heat_report":                "S3 热度总结",
 	"heat_plus_oi":               "热度 + OI",
 	"heat_plus_negative_funding": "热度 + 负费率",
 	"oi_anomaly":                 "OI 异动",
@@ -34,6 +35,7 @@ var s3TypeLabels = map[string]string{
 
 var s3TypeSummaries = map[string]string{
 	"heat":                       "热度开始聚集，值得放进观察名单继续盯。",
+	"heat_report":                "S3 每轮热度、资金费率和 OI 聚合总结。",
 	"heat_plus_oi":               "热度已经起来，未平仓总额同步增加，属于更强确认。",
 	"heat_plus_negative_funding": "热度有了，负费率说明空头拥挤，容易形成逼空逻辑。",
 	"oi_anomaly":                 "未平仓总额变化很大，但未必有热度配合，需要更谨慎判断。",
@@ -61,10 +63,18 @@ var s2TypeSummaries = map[string]string{
 
 var s1TypeLabels = map[string]string{
 	"alpha_discovery": "币安公告发现",
+	"alpha_countdown": "Alpha 倒计时",
+	"alpha_launch":    "Alpha 上线",
+	"alpha_followup":  "Alpha 跟踪",
+	"alpha_anomaly":   "Alpha 异动",
 }
 
 var s1TypeSummaries = map[string]string{
 	"alpha_discovery": "来自 Binance 公告 / Alpha 事件的发现信号，偏事件驱动。",
+	"alpha_countdown": "上线前关键时间窗口提醒。",
+	"alpha_launch":    "项目进入上线窗口，记录首个市场快照。",
+	"alpha_followup":  "上线后的 30 分钟节奏跟踪。",
+	"alpha_anomaly":   "上线后价格或市值出现大幅异动。",
 }
 
 var s1KindLabels = map[string]string{
@@ -210,7 +220,7 @@ func (s *Scheduler) pushSignals(ctx context.Context, baseSignals []*model.Signal
 		recentPushes[tokenKey(signal.Chain, signal.Address)] = signal
 	}
 
-	if scannerName == "s3" {
+	if scannerName == "s3" && !hasForcePushedSignal(baseSignals) {
 		digestIDs, err := s.maybeSendS3Digest(ctx, notifier, pushedIDs, recentPushes)
 		if err != nil {
 			return pushedIDs, err
@@ -221,6 +231,15 @@ func (s *Scheduler) pushSignals(ctx context.Context, baseSignals []*model.Signal
 }
 
 // markSignalsPushed 将已发送成功的信号标记 pushed_at。
+func hasForcePushedSignal(signals []*model.SignalEvent) bool {
+	for _, signal := range signals {
+		if signal != nil && rawBool(parseRaw(signal.RawJSON)["force_push"]) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Scheduler) markSignalsPushed(signalIDs []int64) error {
 	if len(signalIDs) == 0 {
 		return nil
@@ -424,6 +443,9 @@ func (s *Scheduler) settingsMap() map[string]any {
 // decidePush 根据来源、优先级、观察名单状态和 raw 数据决定推送通道。
 func decidePush(signal *model.SignalEvent, isWatchlisted bool) pushDecision {
 	raw := parseRaw(signal.RawJSON)
+	if rawBool(raw["force_push"]) {
+		return pushDecision{channel: "immediate", cooldownExempt: true}
+	}
 	if signal.Source == "system" && signal.SignalType == "resonance" {
 		return pushDecision{channel: "immediate"}
 	}
@@ -673,6 +695,13 @@ func formatS3Digest(signals []*model.SignalEvent) string {
 
 func formatS3SignalMessage(signal *model.SignalEvent) string {
 	raw := parseRaw(signal.RawJSON)
+	if signal.SignalType == "heat_report" {
+		report := rawString(raw["report_text"])
+		if report == "" {
+			report = signal.Reason
+		}
+		return "🔥 <b>S3 热度做多雷达</b>\n<pre>" + html.EscapeString(report) + "</pre>"
+	}
 	tags := parseStringList(signal.TagsJSON)
 	signalLabel := labelOr(s3TypeLabels, signal.SignalType, signal.SignalType)
 	summary := labelOr(s3TypeSummaries, signal.SignalType, signal.Reason)
@@ -861,6 +890,25 @@ func formatS2SignalMessage(signal *model.SignalEvent, token *model.TokenProfile)
 
 func formatS1SignalMessage(signal *model.SignalEvent, token *model.TokenProfile) string {
 	raw := parseRaw(signal.RawJSON)
+	if signal.SignalType != "alpha_discovery" {
+		lines := []string{
+			"📪 <b>S1 Binance Alpha</b>",
+			fmt.Sprintf("<b>%s · %s</b>", html.EscapeString(signal.Symbol), html.EscapeString(labelOr(s1TypeLabels, signal.SignalType, signal.SignalType))),
+			"Time: " + formatBJTime(signal.CreatedAt),
+			"",
+			"Stage: " + html.EscapeString(rawStringDefault(raw["push_type"], signal.SignalType)),
+			"Launch: " + html.EscapeString(rawStringDefault(raw["launch_time"], "-")),
+			fmt.Sprintf("Price: %s   MC: $%s   FDV: $%s", formatPrice(raw["price"]), formatCompactNumber(raw["mcap"]), formatCompactNumber(raw["fdv"])),
+		}
+		if raw["change_pct"] != nil {
+			lines = append(lines, "Change: "+html.EscapeString(fmtSigned(raw["change_pct"], 1, "%")))
+		}
+		if contractLine := formatContractLine(signal, token); contractLine != "" {
+			lines = append(lines, contractLine)
+		}
+		lines = append(lines, "", html.EscapeString(signal.Reason))
+		return strings.Join(lines, "\n")
+	}
 	tags := parseStringList(signal.TagsJSON)
 	signalLabel := labelOr(s1TypeLabels, signal.SignalType, signal.SignalType)
 	summary := labelOr(s1TypeSummaries, signal.SignalType, signal.Reason)

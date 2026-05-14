@@ -64,6 +64,7 @@ func Open(settings *config.Settings) (*gorm.DB, error) {
 			&model.WatchlistItem{},
 			&model.ScannerRun{},
 			&model.AppSetting{},
+			&model.ScannerState{},
 			&insider.Wallet{},
 			&insider.TokenAccount{},
 			&insider.Transaction{},

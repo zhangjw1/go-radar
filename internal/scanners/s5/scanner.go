@@ -70,6 +70,12 @@ type rankSpec struct {
 	limit    int    // limit 是拉取数量上限。
 }
 
+type momentumPushState struct {
+	Count  int     `json:"count"`
+	LastTS int64   `json:"last_ts"`
+	LastMC float64 `json:"last_mc"`
+}
+
 // NewScanner 创建 S5 扫描器实例。
 func NewScanner(db *gorm.DB) *Scanner {
 	return &Scanner{db: db, client: scanners.NewHTTPClient()}
@@ -96,6 +102,7 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 		}
 	}
 
+	momentumPushed := 0
 	for _, token := range combined {
 		previousRows, err := s.recentMomentumRows(token.Chain, token.Address, settingInt(s.db, "s5_signal_lookback", "S5_SIGNAL_LOOKBACK", 20))
 		if err != nil {
@@ -165,7 +172,7 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			return safety, desc
 		}
 
-		if shouldConsiderDiscovery {
+		if shouldConsiderDiscovery && scanners.EnvBool("S5_ENABLE_DISCOVERY_SIGNALS", false) {
 			safety, desc = ensureEnrichment()
 			if isSafe(safety) {
 				payload := buildTokenPayload(token, discoveryTags, desc)
@@ -211,8 +218,26 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 		if !momentum.Triggered {
 			continue
 		}
+		pushState, err := s.momentumPushState(token.Address)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("momentum_state_failed:%s:%v", token.Address, err))
+			continue
+		}
+		if pushState.Count > 0 && token.MC <= pushState.LastMC {
+			continue
+		}
 		safety, desc = ensureEnrichment()
 		if !isSafe(safety) {
+			continue
+		}
+		if momentumPushed >= 8 {
+			continue
+		}
+		pushState.Count++
+		pushState.LastTS = time.Now().Unix()
+		pushState.LastMC = token.MC
+		if err := s.saveMomentumPushState(token.Address, pushState); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("save_momentum_state_failed:%s:%v", token.Address, err))
 			continue
 		}
 		momentumTags := append([]string{}, discoveryTags...)
@@ -230,15 +255,18 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			Score:      ScoreMomentumSignal(maxInt(stars, 2), momentum.PctGain, token.SmartMoney),
 			Reason:     fmt.Sprintf("Market cap rose for %d consecutive rounds, +%.1f%%.", settingInt(s.db, "s5_momentum_consecutive_up", "S5_MOMENTUM_CONSECUTIVE_UP", 3), momentum.PctGain),
 			Tags:       momentumTags,
-			Raw:        map[string]any{"momentum": momentum, "safety": safety},
+			ForcePush:  true,
+			Raw:        map[string]any{"momentum": momentum, "safety": safety, "signal_count": pushState.Count},
 			Token:      buildTokenPayload(token, momentumTags, desc),
 		})
+		momentumPushed++
 	}
 
 	result.Metadata = map[string]any{
 		"token_count":     len(tokens),
 		"flap_count":      len(flapTokens),
 		"combined_count":  len(combined),
+		"momentum_pushed": momentumPushed,
 		"warnings":        result.Warnings,
 		"scanner_backend": "go",
 	}
@@ -377,6 +405,22 @@ func (s *Scanner) recentMomentumRows(chain string, address string, limit int) ([
 		})
 	}
 	return out, nil
+}
+
+func (s *Scanner) momentumPushState(address string) (momentumPushState, error) {
+	state := momentumPushState{}
+	found, err := scanners.LoadState(s.db, "s5", "momentum:"+strings.ToLower(address), &state)
+	if err != nil || !found {
+		return state, err
+	}
+	if time.Now().Unix()-state.LastTS >= 3600 {
+		return momentumPushState{}, nil
+	}
+	return state, nil
+}
+
+func (s *Scanner) saveMomentumPushState(address string, state momentumPushState) error {
+	return scanners.SaveState(s.db, "s5", "momentum:"+strings.ToLower(address), state)
 }
 
 // hasPriorSignal keeps GMGN rank repeats from creating the same discovery alert on every scan.

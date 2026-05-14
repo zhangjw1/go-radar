@@ -118,6 +118,10 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			previousFRPct = &value
 		}
 		hasSpot := spotSymbols[baseSymbol]
+		squarePosts, squareViews, squareWarning := s.getSquareDiscussion(ctx, baseSymbol)
+		if squareWarning != "" {
+			result.Warnings = append(result.Warnings, squareWarning)
+		}
 		var currentOIUSD *float64
 		var oiChange *float64
 		segments := []float64{}
@@ -159,6 +163,8 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 				"previous_funding_pct": previousFRPct,
 				"current_funding_pct":  currentFRPct,
 				"has_spot":             hasSpot,
+				"square_posts":         squarePosts,
+				"square_views":         squareViews,
 			},
 		})
 
@@ -182,6 +188,8 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			"oi_change_pct":        *oiChange,
 			"volume_usd":           volumeUSD,
 			"has_spot":             hasSpot,
+			"square_posts":         squarePosts,
+			"square_views":         squareViews,
 		}
 		result.Signals = append(result.Signals, scanners.SignalPayload{
 			Source:     "s2",
@@ -194,6 +202,7 @@ func (s *Scanner) Scan(ctx context.Context) (scanners.Result, error) {
 			Score:      ScoreFundingSignal(currentFRPct, *oiChange, hasSpot, volumeUSD),
 			Reason:     fmt.Sprintf("Funding flipped from %s%% to %+0.3f%%, OI %+0.1f%%", formatOptional(previousFRPct), currentFRPct, *oiChange),
 			Tags:       tags,
+			ForcePush:  true,
 			Raw:        raw,
 			Token: &scanners.TokenPayload{
 				Chain:          "binance_perp",
@@ -324,4 +333,24 @@ func formatOptional(value *float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%+0.3f", *value)
+}
+
+func (s *Scanner) getSquareDiscussion(ctx context.Context, coin string) (int64, int64, string) {
+	params := url.Values{}
+	params.Set("hashtag", "#"+strings.ToLower(coin))
+	params.Set("pageIndex", "1")
+	params.Set("pageSize", "1")
+	params.Set("orderBy", "HOT")
+	var response struct {
+		Data struct {
+			Hashtag struct {
+				ContentCount int64 `json:"contentCount"`
+				ViewCount    int64 `json:"viewCount"`
+			} `json:"hashtag"`
+		} `json:"data"`
+	}
+	if err := s.getJSON(ctx, "https://www.binance.com/bapi/composite/v4/friendly/pgc/content/queryByHashtag", params, &response); err != nil {
+		return 0, 0, fmt.Sprintf("square_discussion_failed:%s:%v", coin, err)
+	}
+	return response.Data.Hashtag.ContentCount, response.Data.Hashtag.ViewCount, ""
 }

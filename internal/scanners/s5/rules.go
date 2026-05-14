@@ -47,7 +47,6 @@ func EvaluateMomentum(historicalRows []MomentumRow, currentRow MomentumRow, cons
 		}
 	}
 
-	totalGain := 0.0
 	buysOK := true
 	for i := 1; i < len(recent); i++ {
 		prev := recent[i-1]
@@ -55,13 +54,17 @@ func EvaluateMomentum(historicalRows []MomentumRow, currentRow MomentumRow, cons
 		if prev.MC <= 0 || curr.MC <= prev.MC {
 			return MomentumResult{Triggered: false, Reason: "not_consecutive_up"}
 		}
-		totalGain += (curr.MC - prev.MC) / prev.MC
 		if prev.Buys1H > 0 && curr.Buys1H < prev.Buys1H*0.8 {
 			buysOK = false
 		}
 	}
 
-	pctGain := totalGain * 100
+	pctGain := 0.0
+	firstMC := recent[0].MC
+	lastMC := recent[len(recent)-1].MC
+	if firstMC > 0 {
+		pctGain = (lastMC - firstMC) / firstMC * 100
+	}
 	if pctGain < minGainPct {
 		return MomentumResult{Triggered: false, Reason: "gain_too_small", PctGain: pctGain}
 	}
@@ -130,7 +133,6 @@ func ClassifyNarrative(name string, symbol string, chain string) (string, []stri
 			return "spam", nil
 		}
 	}
-
 	if matched := matchKeywords(text, []string{"musk", "elon", "elonmusk", "spacex", "starship", "tesla", "cybertruck", "neuralink", "xai", "grok", "floki", "shiba", "dogefather", "mars", "trump", "maga", "potus", "melania", "barron", "ivanka", "covfefe"}); len(matched) > 0 {
 		if isKnownNarrativeChain(chain) {
 			return "musk_trump", matched
