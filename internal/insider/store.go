@@ -73,7 +73,7 @@ func (s *Store) UpsertTokenAccounts(walletID int64, accounts []TokenAccount) err
 		Columns: []clause.Column{{Name: "wallet_id"}, {Name: "mint_address"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			"balance":      gorm.Expr("excluded.balance"),
-			"token_name":   gorm.Expr("case when excluded.token_name <> '' then excluded.token_name else insider_token_accounts.token_name end"),
+			"token_name":   gorm.Expr("case when excluded.token_name <> '' then excluded.token_name else " + TableInsiderTokenAccount + ".token_name end"),
 			"decimals":     gorm.Expr("excluded.decimals"),
 			"last_updated": gorm.Expr("excluded.last_updated"),
 		}),

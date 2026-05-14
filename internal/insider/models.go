@@ -3,6 +3,17 @@ package insider
 import "time"
 
 const (
+	TableInsiderWallet              = "t_insider_wallet"
+	TableInsiderTokenAccount        = "t_insider_token_account"
+	TableInsiderTransaction         = "t_insider_transaction"
+	TableInsiderPriceRecord         = "t_insider_price_record"
+	TableInsiderAlertRule           = "t_insider_alert_rule"
+	TableInsiderAlertHistory        = "t_insider_alert_history"
+	TableInsiderWalletSnapshot      = "t_insider_wallet_snapshot"
+	TableInsiderNotificationChannel = "t_insider_notification_channel"
+)
+
+const (
 	EngineService = "service"
 	EngineLegacy  = "legacy"
 
@@ -13,14 +24,14 @@ const (
 )
 
 type Wallet struct {
-	ID        int64     `gorm:"column:id;primaryKey" json:"id"`
-	Address   string    `gorm:"column:address;uniqueIndex;size:64;not null" json:"address"`
-	Label     string    `gorm:"column:label;size:255;not null;default:''" json:"label"`
-	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
+	ID        int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	Address   string    `gorm:"column:address;uniqueIndex;size:64;not null;comment:钱包地址" json:"address"`
+	Label     string    `gorm:"column:label;size:255;not null;default:'';comment:钱包标签" json:"label"`
+	CreatedAt time.Time `gorm:"column:created_at;comment:创建时间" json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at;comment:更新时间" json:"updated_at"`
 }
 
-func (Wallet) TableName() string { return "insider_wallets" }
+func (Wallet) TableName() string { return TableInsiderWallet }
 
 func (w Wallet) LabelOrAddress() string {
 	if w.Label != "" {
@@ -30,17 +41,17 @@ func (w Wallet) LabelOrAddress() string {
 }
 
 type TokenAccount struct {
-	ID          int64     `gorm:"column:id;primaryKey" json:"id"`
-	WalletID    int64     `gorm:"column:wallet_id;uniqueIndex:idx_insider_wallet_mint;not null" json:"wallet_id"`
-	MintAddress string    `gorm:"column:mint_address;uniqueIndex:idx_insider_wallet_mint;size:64;not null" json:"mint_address"`
-	TokenName   string    `gorm:"column:token_name;size:255;not null;default:''" json:"token_name"`
-	Balance     float64   `gorm:"column:balance;not null;default:0" json:"balance"`
-	Decimals    int       `gorm:"column:decimals;not null;default:0" json:"decimals"`
-	USDValue    float64   `gorm:"column:usd_value;not null;default:0" json:"usd_value"`
-	LastUpdated time.Time `gorm:"column:last_updated" json:"last_updated"`
+	ID          int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	WalletID    int64     `gorm:"column:wallet_id;uniqueIndex:idx_insider_wallet_mint;not null;comment:钱包主键ID" json:"wallet_id"`
+	MintAddress string    `gorm:"column:mint_address;uniqueIndex:idx_insider_wallet_mint;size:64;not null;comment:代币Mint地址" json:"mint_address"`
+	TokenName   string    `gorm:"column:token_name;size:255;not null;default:'';comment:代币名称" json:"token_name"`
+	Balance     float64   `gorm:"column:balance;not null;default:0;comment:代币余额" json:"balance"`
+	Decimals    int       `gorm:"column:decimals;not null;default:0;comment:代币精度" json:"decimals"`
+	USDValue    float64   `gorm:"column:usd_value;not null;default:0;comment:美元价值" json:"usd_value"`
+	LastUpdated time.Time `gorm:"column:last_updated;comment:最近更新时间" json:"last_updated"`
 }
 
-func (TokenAccount) TableName() string { return "insider_token_accounts" }
+func (TokenAccount) TableName() string { return TableInsiderTokenAccount }
 
 type TokenHolding struct {
 	MintAddress  string  `json:"mint_address"`
@@ -58,85 +69,85 @@ type TokenHolding struct {
 }
 
 type Transaction struct {
-	ID          int64     `gorm:"column:id;primaryKey" json:"id"`
-	WalletID    int64     `gorm:"column:wallet_id;index;not null" json:"wallet_id"`
-	Signature   string    `gorm:"column:signature;uniqueIndex:idx_insider_tx_unique;size:128;not null" json:"signature"`
-	MintAddress string    `gorm:"column:mint_address;uniqueIndex:idx_insider_tx_unique;size:64;not null" json:"mint_address"`
-	TokenName   string    `gorm:"column:token_name;size:255;not null;default:''" json:"token_name"`
-	TxType      string    `gorm:"column:tx_type;uniqueIndex:idx_insider_tx_unique;size:20;not null" json:"tx_type"`
-	Amount      float64   `gorm:"column:amount;not null;default:0" json:"amount"`
-	PriceAtTime float64   `gorm:"column:price_at_time;not null;default:0" json:"price_at_time"`
-	SolAmount   float64   `gorm:"column:sol_amount;not null;default:0" json:"sol_amount"`
-	BlockTime   time.Time `gorm:"column:block_time;index;not null" json:"block_time"`
-	CreatedAt   time.Time `gorm:"column:created_at" json:"created_at"`
+	ID          int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	WalletID    int64     `gorm:"column:wallet_id;index;not null;comment:钱包主键ID" json:"wallet_id"`
+	Signature   string    `gorm:"column:signature;uniqueIndex:idx_insider_tx_unique;size:128;not null;comment:交易签名" json:"signature"`
+	MintAddress string    `gorm:"column:mint_address;uniqueIndex:idx_insider_tx_unique;size:64;not null;comment:代币Mint地址" json:"mint_address"`
+	TokenName   string    `gorm:"column:token_name;size:255;not null;default:'';comment:代币名称" json:"token_name"`
+	TxType      string    `gorm:"column:tx_type;uniqueIndex:idx_insider_tx_unique;size:20;not null;comment:交易类型" json:"tx_type"`
+	Amount      float64   `gorm:"column:amount;not null;default:0;comment:代币数量" json:"amount"`
+	PriceAtTime float64   `gorm:"column:price_at_time;not null;default:0;comment:交易时价格" json:"price_at_time"`
+	SolAmount   float64   `gorm:"column:sol_amount;not null;default:0;comment:SOL数量" json:"sol_amount"`
+	BlockTime   time.Time `gorm:"column:block_time;index;not null;comment:区块时间" json:"block_time"`
+	CreatedAt   time.Time `gorm:"column:created_at;comment:创建时间" json:"created_at"`
 }
 
-func (Transaction) TableName() string { return "insider_transactions" }
+func (Transaction) TableName() string { return TableInsiderTransaction }
 
 type PriceRecord struct {
-	ID          int64     `gorm:"column:id;primaryKey" json:"id"`
-	MintAddress string    `gorm:"column:mint_address;index;size:64;not null" json:"mint_address"`
-	PriceUSD    float64   `gorm:"column:price_usd;not null;default:0" json:"price_usd"`
-	Source      string    `gorm:"column:source;size:50;not null;default:'jupiter'" json:"source"`
-	RecordedAt  time.Time `gorm:"column:recorded_at;index" json:"recorded_at"`
+	ID          int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	MintAddress string    `gorm:"column:mint_address;index;size:64;not null;comment:代币Mint地址" json:"mint_address"`
+	PriceUSD    float64   `gorm:"column:price_usd;not null;default:0;comment:美元价格" json:"price_usd"`
+	Source      string    `gorm:"column:source;size:50;not null;default:'jupiter';comment:价格来源" json:"source"`
+	RecordedAt  time.Time `gorm:"column:recorded_at;index;comment:记录时间" json:"recorded_at"`
 }
 
-func (PriceRecord) TableName() string { return "insider_price_history" }
+func (PriceRecord) TableName() string { return TableInsiderPriceRecord }
 
 type AlertRule struct {
-	ID             int64     `gorm:"column:id;primaryKey" json:"id"`
-	WalletID       *int64    `gorm:"column:wallet_id;index" json:"wallet_id"`
-	RuleType       string    `gorm:"column:rule_type;size:50;not null" json:"rule_type"`
-	Threshold      float64   `gorm:"column:threshold;not null;default:0" json:"threshold"`
-	ChannelIDsJSON string    `gorm:"column:channel_ids_json;type:text;not null;default:'[]'" json:"-"`
-	Enabled        bool      `gorm:"column:enabled;not null;default:true" json:"enabled"`
-	CreatedAt      time.Time `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt      time.Time `gorm:"column:updated_at" json:"updated_at"`
+	ID             int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	WalletID       *int64    `gorm:"column:wallet_id;index;comment:钱包主键ID" json:"wallet_id"`
+	RuleType       string    `gorm:"column:rule_type;size:50;not null;comment:规则类型" json:"rule_type"`
+	Threshold      float64   `gorm:"column:threshold;not null;default:0;comment:阈值" json:"threshold"`
+	ChannelIDsJSON string    `gorm:"column:channel_ids_json;type:text;not null;default:'[]';comment:通知渠道ID列表JSON" json:"-"`
+	Enabled        bool      `gorm:"column:enabled;not null;default:true;comment:是否启用" json:"enabled"`
+	CreatedAt      time.Time `gorm:"column:created_at;comment:创建时间" json:"created_at"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;comment:更新时间" json:"updated_at"`
 	Wallet         *Wallet   `gorm:"-" json:"wallet,omitempty"`
 	ChannelIDs     []int64   `gorm:"-" json:"channel_ids"`
 }
 
-func (AlertRule) TableName() string { return "insider_alert_rules" }
+func (AlertRule) TableName() string { return TableInsiderAlertRule }
 
 type AlertHistory struct {
-	ID          int64          `gorm:"column:id;primaryKey" json:"id"`
-	WalletID    *int64         `gorm:"column:wallet_id;index" json:"wallet_id"`
-	AlertRuleID *int64         `gorm:"column:alert_rule_id" json:"alert_rule_id"`
-	AlertType   string         `gorm:"column:alert_type;size:50;not null" json:"alert_type"`
-	Message     string         `gorm:"column:message;type:text;not null;default:''" json:"message"`
-	Level       string         `gorm:"column:level;size:20;not null;default:'info'" json:"level"`
-	DataJSON    string         `gorm:"column:data_json;type:text" json:"-"`
-	CreatedAt   time.Time      `gorm:"column:created_at;index" json:"created_at"`
+	ID          int64          `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	WalletID    *int64         `gorm:"column:wallet_id;index;comment:钱包主键ID" json:"wallet_id"`
+	AlertRuleID *int64         `gorm:"column:alert_rule_id;comment:告警规则主键ID" json:"alert_rule_id"`
+	AlertType   string         `gorm:"column:alert_type;size:50;not null;comment:告警类型" json:"alert_type"`
+	Message     string         `gorm:"column:message;type:text;not null;default:'';comment:告警消息" json:"message"`
+	Level       string         `gorm:"column:level;size:20;not null;default:'info';comment:告警级别" json:"level"`
+	DataJSON    string         `gorm:"column:data_json;type:text;comment:告警载荷JSON" json:"-"`
+	CreatedAt   time.Time      `gorm:"column:created_at;index;comment:创建时间" json:"created_at"`
 	Wallet      *Wallet        `gorm:"-" json:"wallet,omitempty"`
 	Data        map[string]any `gorm:"-" json:"data"`
 }
 
-func (AlertHistory) TableName() string { return "insider_alert_history" }
+func (AlertHistory) TableName() string { return TableInsiderAlertHistory }
 
 type WalletSnapshot struct {
-	ID              int64     `gorm:"column:id;primaryKey" json:"id"`
-	WalletID        int64     `gorm:"column:wallet_id;index;not null" json:"wallet_id"`
-	TotalBalanceUSD float64   `gorm:"column:total_balance_usd;not null;default:0" json:"total_balance_usd"`
-	TokenMintsJSON  string    `gorm:"column:token_mints_json;type:text" json:"-"`
-	CreatedAt       time.Time `gorm:"column:created_at;index" json:"created_at"`
+	ID              int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	WalletID        int64     `gorm:"column:wallet_id;index;not null;comment:钱包主键ID" json:"wallet_id"`
+	TotalBalanceUSD float64   `gorm:"column:total_balance_usd;not null;default:0;comment:总美元余额" json:"total_balance_usd"`
+	TokenMintsJSON  string    `gorm:"column:token_mints_json;type:text;comment:代币Mint列表JSON" json:"-"`
+	CreatedAt       time.Time `gorm:"column:created_at;index;comment:创建时间" json:"created_at"`
 }
 
-func (WalletSnapshot) TableName() string { return "insider_wallet_snapshots" }
+func (WalletSnapshot) TableName() string { return TableInsiderWalletSnapshot }
 
 type NotificationChannel struct {
-	ID          int64     `gorm:"column:id;primaryKey" json:"id"`
-	Name        string    `gorm:"column:name;size:100;not null" json:"name"`
-	ChannelType string    `gorm:"column:channel_type;size:20;not null" json:"channel_type"`
-	Recipient   string    `gorm:"column:recipient;size:255;not null;default:''" json:"recipient"`
-	WebhookURL  string    `gorm:"column:webhook_url;size:500;not null;default:''" json:"webhook_url"`
-	BotToken    string    `gorm:"column:bot_token;size:255;not null;default:''" json:"bot_token"`
-	ChatID      string    `gorm:"column:chat_id;size:100;not null;default:''" json:"chat_id"`
-	Enabled     bool      `gorm:"column:enabled;not null;default:true" json:"enabled"`
-	CreatedAt   time.Time `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt   time.Time `gorm:"column:updated_at" json:"updated_at"`
+	ID          int64     `gorm:"column:id;primaryKey;comment:主键ID" json:"id"`
+	Name        string    `gorm:"column:name;size:100;not null;comment:渠道名称" json:"name"`
+	ChannelType string    `gorm:"column:channel_type;size:20;not null;comment:渠道类型" json:"channel_type"`
+	Recipient   string    `gorm:"column:recipient;size:255;not null;default:'';comment:接收对象" json:"recipient"`
+	WebhookURL  string    `gorm:"column:webhook_url;size:500;not null;default:'';comment:回调地址" json:"webhook_url"`
+	BotToken    string    `gorm:"column:bot_token;size:255;not null;default:'';comment:机器人令牌" json:"bot_token"`
+	ChatID      string    `gorm:"column:chat_id;size:100;not null;default:'';comment:会话ID" json:"chat_id"`
+	Enabled     bool      `gorm:"column:enabled;not null;default:true;comment:是否启用" json:"enabled"`
+	CreatedAt   time.Time `gorm:"column:created_at;comment:创建时间" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;comment:更新时间" json:"updated_at"`
 }
 
-func (NotificationChannel) TableName() string { return "insider_notification_channels" }
+func (NotificationChannel) TableName() string { return TableInsiderNotificationChannel }
 
 type Analytics struct {
 	WalletID        int64      `json:"wallet_id"`

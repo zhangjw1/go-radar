@@ -357,9 +357,10 @@ func (s *Scanner) acceptCandidate(token tokenData, seen map[string]bool, require
 // recentMomentumRows 读取同一 token 的历史 S5 快照，供连续上涨判断使用。
 func (s *Scanner) recentMomentumRows(chain string, address string, limit int) ([]MomentumRow, error) {
 	var rows []model.TokenSnapshot
-	err := s.db.Joins("JOIN tokens ON snapshots.token_id = tokens.id").
-		Where("tokens.chain = ? AND tokens.address = ? AND snapshots.source = ?", strings.ToLower(chain), scanners.NormalizeAddress(address), "s5").
-		Order("snapshots.created_at desc").
+	join := "JOIN " + model.TableRadarToken + " ON " + model.TableRadarMarketSnapshot + ".token_id = " + model.TableRadarToken + ".id"
+	err := s.db.Joins(join).
+		Where(model.TableRadarToken+".chain = ? AND "+model.TableRadarToken+".address = ? AND "+model.TableRadarMarketSnapshot+".source = ?", strings.ToLower(chain), scanners.NormalizeAddress(address), "s5").
+		Order(model.TableRadarMarketSnapshot + ".created_at desc").
 		Limit(limit).
 		Find(&rows).Error
 	if err != nil {

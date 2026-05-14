@@ -11,19 +11,27 @@ import (
 
 const defaultPort = "8080"
 
+type DBDriver string
+
+const (
+	DBDriverSQLite   DBDriver = "sqlite"
+	DBDriverPostgres DBDriver = "postgres"
+)
+
 // Settings 保存 Go Radar 启动时解析出的运行配置。
 type Settings struct {
-	AppName         string // AppName 是页面和健康检查中展示的应用名称。
-	DatabaseURL     string // DatabaseURL 是 .env 或环境变量中的原始数据库连接串。
-	DatabasePath    string // DatabasePath 是解析后的 SQLite 文件路径，供 sqlite driver 直接打开。
-	EnvPath         string // EnvPath 是实际加载的 .env 文件路径；为空表示未加载 .env。
-	EnvDir          string // EnvDir 是 .env 所在目录，用于解析 sqlite:///./radar.db 这类相对路径。
-	Port            string // Port 是 Go 服务监听端口，默认 8080，避免占用 Python 服务端口。
-	EnableScheduler bool   // EnableScheduler 控制 Go 版调度器是否真正运行扫描任务。
-	AutoMigrate     bool   // AutoMigrate 控制是否仅为缺失表创建 schema，不会修改已有 Python 表。
+	AppName         string
+	DatabaseURL     string
+	DatabaseDriver  DBDriver
+	DatabasePath    string
+	EnvPath         string
+	EnvDir          string
+	Port            string
+	EnableScheduler bool
+	AutoMigrate     bool
 }
 
-// Load 从环境变量和 .env 文件读取配置，并把 SQLite URL 解析成可打开的本地路径。
+// Load 从环境变量和 .env 文件读取配置，并解析数据库连接。
 func Load() (*Settings, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -47,8 +55,11 @@ func Load() (*Settings, error) {
 		envDir = filepath.Dir(envPath)
 	}
 
-	databaseURL := firstNonEmpty(os.Getenv("DATABASE_URL"), "sqlite:///./radar.db")
-	databasePath, err := SQLitePathFromURL(databaseURL, envDir)
+	databaseURL := firstNonEmpty(
+		os.Getenv("DATABASE_URL"),
+		"sqlite:///./radar.db",
+	)
+	driver, databasePath, err := ParseDatabaseURL(databaseURL, envDir)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +67,7 @@ func Load() (*Settings, error) {
 	return &Settings{
 		AppName:         firstNonEmpty(os.Getenv("APP_NAME"), "Web3 Online Radar"),
 		DatabaseURL:     databaseURL,
+		DatabaseDriver:  driver,
 		DatabasePath:    databasePath,
 		EnvPath:         envPath,
 		EnvDir:          envDir,
@@ -65,11 +77,23 @@ func Load() (*Settings, error) {
 	}, nil
 }
 
+// ParseDatabaseURL 解析数据库 URL；SQLite 返回文件路径，PostgreSQL 返回原始连接串。
+func ParseDatabaseURL(databaseURL string, baseDir string) (DBDriver, string, error) {
+	if strings.HasPrefix(databaseURL, "sqlite:///") {
+		path, err := SQLitePathFromURL(databaseURL, baseDir)
+		return DBDriverSQLite, path, err
+	}
+	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
+		return DBDriverPostgres, strings.TrimSpace(databaseURL), nil
+	}
+	return "", "", fmt.Errorf("unsupported DATABASE_URL %q", databaseURL)
+}
+
 // SQLitePathFromURL 将 sqlite:/// 开头的 DATABASE_URL 转为 SQLite 文件路径。
 func SQLitePathFromURL(databaseURL string, baseDir string) (string, error) {
 	const prefix = "sqlite:///"
 	if !strings.HasPrefix(databaseURL, prefix) {
-		return "", fmt.Errorf("only sqlite database URLs are supported, got %q", databaseURL)
+		return "", fmt.Errorf("unsupported sqlite database URL %q", databaseURL)
 	}
 
 	rawPath := strings.TrimPrefix(databaseURL, prefix)
@@ -85,7 +109,6 @@ func SQLitePathFromURL(databaseURL string, baseDir string) (string, error) {
 	return filepath.Clean(filepath.Join(baseDir, rawPath)), nil
 }
 
-// findEnvFile 按 GO_RADAR_ENV_FILE、当前目录、父目录的顺序查找 .env。
 func findEnvFile() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("GO_RADAR_ENV_FILE")); override != "" {
 		if strings.EqualFold(override, "none") || strings.EqualFold(override, "off") || strings.EqualFold(override, "false") {
@@ -120,7 +143,6 @@ func findEnvFile() (string, error) {
 	return "", nil
 }
 
-// readEnvFile 读取简单的 KEY=VALUE 格式 .env，并忽略空行和注释行。
 func readEnvFile(path string) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -146,7 +168,6 @@ func readEnvFile(path string) (map[string]string, error) {
 	return values, scanner.Err()
 }
 
-// firstNonEmpty 返回第一项非空字符串，常用于环境变量默认值兜底。
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -156,7 +177,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// envBool 按常见布尔写法解析环境变量，无法解析或为空时返回 fallback。
 func envBool(key string, fallback bool) bool {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {

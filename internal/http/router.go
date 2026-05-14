@@ -808,7 +808,8 @@ func applySignalFilters(query *gorm.DB, filters SignalFilters) *gorm.DB {
 		query = query.Where("priority = ?", filters.Priority)
 	}
 	if filters.WatchlistOnly {
-		query = query.Joins("JOIN watchlist ON watchlist.chain = signals.chain AND watchlist.address = signals.address")
+		join := "JOIN " + model.TableRadarWatchlist + " ON " + model.TableRadarWatchlist + ".chain = " + model.TableRadarSignalEvent + ".chain AND " + model.TableRadarWatchlist + ".address = " + model.TableRadarSignalEvent + ".address"
+		query = query.Joins(join)
 	}
 	return query
 }
@@ -849,9 +850,10 @@ func (s *Server) sourceCounts(hours int) map[string]int64 {
 
 func (s *Server) watchlistHitCount(hours int) int64 {
 	var count int64
+	join := "JOIN " + model.TableRadarWatchlist + " ON " + model.TableRadarWatchlist + ".chain = " + model.TableRadarSignalEvent + ".chain AND " + model.TableRadarWatchlist + ".address = " + model.TableRadarSignalEvent + ".address"
 	_ = s.db.Model(&model.SignalEvent{}).
-		Joins("JOIN watchlist ON watchlist.chain = signals.chain AND watchlist.address = signals.address").
-		Where("signals.created_at >= ?", time.Now().UTC().Add(-time.Duration(hours)*time.Hour).Format(time.RFC3339Nano)).
+		Joins(join).
+		Where(model.TableRadarSignalEvent+".created_at >= ?", time.Now().UTC().Add(-time.Duration(hours)*time.Hour).Format(time.RFC3339Nano)).
 		Count(&count).Error
 	return count
 }

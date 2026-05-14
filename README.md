@@ -47,8 +47,9 @@ go run ./cmd/radar
 - `.env.example` contains the standalone configuration template.
 - `.env` is optional. If it does not exist, Go Radar starts with safe defaults.
 - `GO_RADAR_ENV_FILE=none` forces Go Radar to ignore parent `.env` files.
-- `DATABASE_URL=sqlite:///./radar.db` stores data in this directory.
-- `GO_RADAR_AUTO_MIGRATE=true` creates the SQLite tables automatically.
+- `DATABASE_URL=postgres://user:password@127.0.0.1:5432/go_radar?sslmode=disable` uses PostgreSQL for long-running deployments.
+- `DATABASE_URL=sqlite:///./radar.db` is still supported for local lightweight runs.
+- `GO_RADAR_AUTO_MIGRATE=true` creates missing database tables automatically.
 - `TG_BOT_TOKEN` and `TG_CHAT_ID` are optional. If empty, Telegram sending is disabled.
 - `GMGN_API_KEY` is optional for public fallback calls, but recommended for `gmgn-cli` and authenticated GMGN access. Direct GMGN HTTP fallback sends it as the `X-APIKEY` header when configured.
 - `gmgn-cli` is optional, but recommended. For a fully standalone setup, run `npm install` in this directory so `node_modules/.bin/gmgn-cli` is available locally.
