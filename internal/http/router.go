@@ -1379,15 +1379,15 @@ func defaultSettingValue(key string) any {
 	case "scan_interval_insider":
 		return envInt("SCAN_INTERVAL_INSIDER", 300)
 	case "scan_interval_s7":
-		return envInt("SCAN_INTERVAL_S7", 20)
+		return envInt("SCAN_INTERVAL_S7", 1800)
 	case "scan_interval_s5":
-		return envInt("SCAN_INTERVAL_S5", 120)
+		return envInt("SCAN_INTERVAL_S5", 600)
 	case "scan_interval_s3":
-		return envInt("SCAN_INTERVAL_S3", 300)
+		return envInt("SCAN_INTERVAL_S3", 1800)
 	case "scan_interval_s2":
-		return envInt("SCAN_INTERVAL_S2", 120)
+		return envInt("SCAN_INTERVAL_S2", 1800)
 	case "scan_interval_s1":
-		return envInt("SCAN_INTERVAL_S1", 30)
+		return envInt("SCAN_INTERVAL_S1", 3600)
 	case "gmgn_retries":
 		return envInt("GMGN_RETRIES", 0)
 	case "s7_min_notify_usd":

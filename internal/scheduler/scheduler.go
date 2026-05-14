@@ -49,11 +49,11 @@ func New(db *gorm.DB, enabled bool) *Scheduler {
 		db:      db,
 		enabled: enabled,
 		specs: []Spec{
-			{Name: "s7", EnabledKey: "enable_scanner_s7", IntervalKey: "scan_interval_s7", EnabledEnvKey: "ENABLE_SCANNER_S7", IntervalEnvKey: "SCAN_INTERVAL_S7", IntervalSeconds: envInt("SCAN_INTERVAL_S7", 20)},
-			{Name: "s5", EnabledKey: "enable_scanner_s5", IntervalKey: "scan_interval_s5", EnabledEnvKey: "ENABLE_SCANNER_S5", IntervalEnvKey: "SCAN_INTERVAL_S5", IntervalSeconds: envInt("SCAN_INTERVAL_S5", 120)},
-			{Name: "s3", EnabledKey: "enable_scanner_s3", IntervalKey: "scan_interval_s3", EnabledEnvKey: "ENABLE_SCANNER_S3", IntervalEnvKey: "SCAN_INTERVAL_S3", IntervalSeconds: envInt("SCAN_INTERVAL_S3", 300)},
-			{Name: "s2", EnabledKey: "enable_scanner_s2", IntervalKey: "scan_interval_s2", EnabledEnvKey: "ENABLE_SCANNER_S2", IntervalEnvKey: "SCAN_INTERVAL_S2", IntervalSeconds: envInt("SCAN_INTERVAL_S2", 120)},
-			{Name: "s1", EnabledKey: "enable_scanner_s1", IntervalKey: "scan_interval_s1", EnabledEnvKey: "ENABLE_SCANNER_S1", IntervalEnvKey: "SCAN_INTERVAL_S1", IntervalSeconds: envInt("SCAN_INTERVAL_S1", 30)},
+			{Name: "s7", EnabledKey: "enable_scanner_s7", IntervalKey: "scan_interval_s7", EnabledEnvKey: "ENABLE_SCANNER_S7", IntervalEnvKey: "SCAN_INTERVAL_S7", IntervalSeconds: envInt("SCAN_INTERVAL_S7", 1800)},
+			{Name: "s5", EnabledKey: "enable_scanner_s5", IntervalKey: "scan_interval_s5", EnabledEnvKey: "ENABLE_SCANNER_S5", IntervalEnvKey: "SCAN_INTERVAL_S5", IntervalSeconds: envInt("SCAN_INTERVAL_S5", 600)},
+			{Name: "s3", EnabledKey: "enable_scanner_s3", IntervalKey: "scan_interval_s3", EnabledEnvKey: "ENABLE_SCANNER_S3", IntervalEnvKey: "SCAN_INTERVAL_S3", IntervalSeconds: envInt("SCAN_INTERVAL_S3", 1800)},
+			{Name: "s2", EnabledKey: "enable_scanner_s2", IntervalKey: "scan_interval_s2", EnabledEnvKey: "ENABLE_SCANNER_S2", IntervalEnvKey: "SCAN_INTERVAL_S2", IntervalSeconds: envInt("SCAN_INTERVAL_S2", 1800)},
+			{Name: "s1", EnabledKey: "enable_scanner_s1", IntervalKey: "scan_interval_s1", EnabledEnvKey: "ENABLE_SCANNER_S1", IntervalEnvKey: "SCAN_INTERVAL_S1", IntervalSeconds: envInt("SCAN_INTERVAL_S1", 3600)},
 			{Name: "insider", EnabledKey: "enable_insider_monitor", IntervalKey: "scan_interval_insider", EnabledEnvKey: "ENABLE_INSIDER_MONITOR", IntervalEnvKey: "SCAN_INTERVAL_INSIDER", IntervalSeconds: envInt("SCAN_INTERVAL_INSIDER", 300)},
 		},
 	}
