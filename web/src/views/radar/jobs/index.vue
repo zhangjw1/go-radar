@@ -2,7 +2,9 @@
   <div class="radar-page">
     <a-page-header title="任务状态" subtitle="查看扫描器最近运行结果" />
     <a-card :bordered="false">
-      <a-button type="primary" class="toolbar" @click="fetchData">刷新</a-button>
+      <a-button type="primary" class="toolbar" @click="fetchData"
+        >刷新</a-button
+      >
       <a-table
         row-key="id"
         :columns="columns"
@@ -10,11 +12,17 @@
         :loading="loading"
         :pagination="{ pageSize: 20 }"
       >
-        <template #scanner="{ record }">{{ sourceLabel(record.scanner) }}</template>
+        <template #scanner="{ record }">{{
+          sourceLabel(record.scanner)
+        }}</template>
         <template #status="{ record }">
-          <a-tag :color="record.status === 'ok' ? 'green' : 'red'">{{ record.status }}</a-tag>
+          <a-tag :color="record.status === 'ok' ? 'green' : 'red'">{{
+            record.status
+          }}</a-tag>
         </template>
-        <template #started_at="{ record }">{{ formatTime(record.started_at) }}</template>
+        <template #started_at="{ record }">{{
+          formatTime(record.started_at)
+        }}</template>
       </a-table>
     </a-card>
   </div>
@@ -29,7 +37,12 @@
   const loading = ref(false);
   const jobs = ref<ScannerRun[]>([]);
   const columns: TableColumnData[] = [
-    { title: '开始时间', dataIndex: 'started_at', slotName: 'started_at', width: 130 },
+    {
+      title: '开始时间',
+      dataIndex: 'started_at',
+      slotName: 'started_at',
+      width: 130,
+    },
     { title: '雷达', dataIndex: 'scanner', slotName: 'scanner', width: 140 },
     { title: '状态', dataIndex: 'status', slotName: 'status', width: 100 },
     { title: '信号', dataIndex: 'signal_count', width: 90 },

@@ -11,6 +11,9 @@
     "report": "cross-env REPORT=true npm run build",
     "preview": "npm run build && vite preview --host",
     "type:check": "vue-tsc --noEmit --skipLibCheck",
+    "lint": "eslint --ext .js,.ts,.jsx,.tsx,.vue src",
+    "lint:fix": "eslint --ext .js,.ts,.jsx,.tsx,.vue src --fix && prettier --write \"src/**/*.{js,ts,jsx,tsx,vue,less,css,json}\"",
+    "format": "prettier --write \"src/**/*.{js,ts,jsx,tsx,vue,less,css,json}\"",
     "lint-staged": "npx lint-staged"
   },
   "lint-staged": {

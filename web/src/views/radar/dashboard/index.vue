@@ -35,11 +35,17 @@
             :loading="loading"
             :pagination="false"
           >
-            <template #source="{ record }">{{ sourceLabel(record.source) }}</template>
+            <template #source="{ record }">{{
+              sourceLabel(record.source)
+            }}</template>
             <template #priority="{ record }">
-              <a-tag :color="priorityColor(record.priority)">{{ record.priority }}</a-tag>
+              <a-tag :color="priorityColor(record.priority)">{{
+                record.priority
+              }}</a-tag>
             </template>
-            <template #created_at="{ record }">{{ formatTime(record.created_at) }}</template>
+            <template #created_at="{ record }">{{
+              formatTime(record.created_at)
+            }}</template>
           </a-table>
         </a-card>
       </a-grid-item>
@@ -71,7 +77,12 @@
     SignalEvent,
     WatchlistItem,
   } from '@/api/radar';
-  import { formatTime, priorityColor, radarSources, sourceLabel } from '../shared';
+  import {
+    formatTime,
+    priorityColor,
+    radarSources,
+    sourceLabel,
+  } from '../shared';
 
   const loading = ref(false);
   const signals = ref<SignalEvent[]>([]);
@@ -85,11 +96,21 @@
   );
 
   const signalColumns: TableColumnData[] = [
-    { title: '时间', dataIndex: 'created_at', slotName: 'created_at', width: 110 },
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      slotName: 'created_at',
+      width: 110,
+    },
     { title: '来源', dataIndex: 'source', slotName: 'source', width: 130 },
     { title: '标的', dataIndex: 'symbol', width: 120 },
     { title: '类型', dataIndex: 'signal_type', width: 150 },
-    { title: '优先级', dataIndex: 'priority', slotName: 'priority', width: 100 },
+    {
+      title: '优先级',
+      dataIndex: 'priority',
+      slotName: 'priority',
+      width: 100,
+    },
     { title: '说明', dataIndex: 'reason' },
   ];
 
