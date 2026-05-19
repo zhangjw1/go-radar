@@ -281,7 +281,10 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 	router.GET("/radar-api/insider/alerts/channels", server.apiInsiderChannels)
 	router.POST("/radar-api/insider/alerts/channels", server.apiInsiderSaveChannel)
 	router.PUT("/radar-api/insider/alerts/channels/:id", server.apiInsiderSaveChannel)
-	router.GET("/dashboard", server.dashboard)
+	router.GET("/dashboard", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/app/")
+	})
+	router.GET("/legacy/dashboard", server.dashboard)
 	router.GET("/signals", server.signalsPage)
 	router.GET("/pushes", server.pushesPage)
 	router.GET("/radar/:source", server.radarPage)
@@ -293,7 +296,7 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 	router.POST("/settings", server.settingsSubmit)
 	router.POST("/telegram/test", server.telegramTestPage)
 	router.GET("/", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/dashboard")
+		c.Redirect(http.StatusFound, "/app/")
 	})
 	registerFrontendApp(router)
 	return router
