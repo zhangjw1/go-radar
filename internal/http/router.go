@@ -295,7 +295,23 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 	router.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/dashboard")
 	})
+	registerFrontendApp(router)
 	return router
+}
+
+func registerFrontendApp(router *gin.Engine) {
+	distDir := strings.TrimSpace(os.Getenv("GO_RADAR_WEB_DIST"))
+	if distDir == "" {
+		distDir = "web/dist"
+	}
+	if _, err := os.Stat(distDir); err != nil {
+		return
+	}
+
+	router.GET("/app", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/app/")
+	})
+	router.Static("/app", distDir)
 }
 
 func (s *Server) health(c *gin.Context) {

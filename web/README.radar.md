@@ -22,6 +22,28 @@ Open the scaffold entry page at:
 http://127.0.0.1:5173/#/dashboard/workplace
 ```
 
+## Production
+
+Build the frontend once:
+
+```powershell
+cd D:\Users\jiawei.zhang\project\go-radar\web
+pnpm build:static
+```
+
+Then start only the Go backend:
+
+```powershell
+cd D:\Users\jiawei.zhang\project\go-radar
+go run ./cmd/radar
+```
+
+Open the bundled SPA at:
+
+```text
+http://127.0.0.1:8080/app/#/dashboard/workplace
+```
+
 ## Page Structure
 
 The web app keeps the full Arco Design Pro Vue scaffold as the primary admin
