@@ -3,6 +3,7 @@ import baseConfig from './vite.config.base';
 import configArcoResolverPlugin from './plugin/arcoResolver';
 
 export default mergeConfig(
+  baseConfig,
   {
     base: '/app/',
     mode: 'production',
@@ -19,6 +20,5 @@ export default mergeConfig(
       },
       chunkSizeWarningLimit: 2000,
     },
-  },
-  baseConfig
+  }
 );

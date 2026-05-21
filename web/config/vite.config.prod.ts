@@ -6,6 +6,7 @@ import configArcoResolverPlugin from './plugin/arcoResolver';
 import configImageminPlugin from './plugin/imagemin';
 
 export default mergeConfig(
+  baseConfig,
   {
     base: '/app/',
     mode: 'production',
@@ -27,6 +28,5 @@ export default mergeConfig(
       },
       chunkSizeWarningLimit: 2000,
     },
-  },
-  baseConfig
+  }
 );

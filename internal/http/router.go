@@ -281,25 +281,40 @@ func NewRouterWithScheduler(settings *config.Settings, db *gorm.DB, goScheduler 
 	router.GET("/radar-api/insider/alerts/channels", server.apiInsiderChannels)
 	router.POST("/radar-api/insider/alerts/channels", server.apiInsiderSaveChannel)
 	router.PUT("/radar-api/insider/alerts/channels/:id", server.apiInsiderSaveChannel)
-	router.GET("/dashboard", func(c *gin.Context) {
-		c.Redirect(http.StatusFound, "/app/")
+	router.GET("/dashboard", redirectToFrontend("/visualization/radar-dashboard"))
+	router.GET("/signals", redirectToFrontend("/list/signals"))
+	router.GET("/pushes", redirectToFrontend("/message/tg-pushes"))
+	router.GET("/radar/:source", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/app/#/list/"+c.Param("source"))
 	})
-	router.GET("/legacy/dashboard", server.dashboard)
-	router.GET("/signals", server.signalsPage)
-	router.GET("/pushes", server.pushesPage)
-	router.GET("/radar/:source", server.radarPage)
-	router.GET("/token/:chain/:address", server.tokenPage)
-	router.GET("/watchlist", server.watchlistPage)
-	router.POST("/watchlist", server.watchlistSubmit)
-	router.GET("/jobs", server.jobsPage)
-	router.GET("/settings", server.settingsPage)
-	router.POST("/settings", server.settingsSubmit)
+	router.GET("/token/:chain/:address", func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/app/#/list/token/"+c.Param("chain")+"/"+c.Param("address"))
+	})
+	router.GET("/watchlist", redirectToFrontend("/radar/watchlist"))
+	router.GET("/jobs", redirectToFrontend("/user/radar-jobs"))
+	router.GET("/settings", redirectToFrontend("/user/radar-settings"))
 	router.POST("/telegram/test", server.telegramTestPage)
+	router.GET("/legacy/dashboard", server.dashboard)
+	router.GET("/legacy/signals", server.signalsPage)
+	router.GET("/legacy/pushes", server.pushesPage)
+	router.GET("/legacy/radar/:source", server.radarPage)
+	router.GET("/legacy/token/:chain/:address", server.tokenPage)
+	router.GET("/legacy/watchlist", server.watchlistPage)
+	router.POST("/legacy/watchlist", server.watchlistSubmit)
+	router.GET("/legacy/jobs", server.jobsPage)
+	router.GET("/legacy/settings", server.settingsPage)
+	router.POST("/legacy/settings", server.settingsSubmit)
 	router.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/app/")
 	})
 	registerFrontendApp(router)
 	return router
+}
+
+func redirectToFrontend(frontendPath string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Redirect(http.StatusFound, "/app/#"+frontendPath)
+	}
 }
 
 func registerFrontendApp(router *gin.Engine) {
