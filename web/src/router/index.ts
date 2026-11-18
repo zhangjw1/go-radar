@@ -1,37 +1,35 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
-import NProgress from 'nprogress'; // progress bar
-import 'nprogress/nprogress.css';
-
-import { appRoutes } from './routes';
-import { REDIRECT_MAIN, NOT_FOUND_ROUTE } from './routes/base';
-import createRouteGuard from './guard';
-
-NProgress.configure({ showSpinner: false }); // NProgress Configuration
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      redirect: '/dashboard/workplace',
+      redirect: '/signals',
     },
     {
-      path: '/login',
-      name: 'login',
-      component: () => import('@/views/login/index.vue'),
-      meta: {
-        requiresAuth: false,
-      },
+      path: '/signals',
+      name: 'Signals',
+      component: () => import('@/views/signals/SignalsView.vue'),
     },
-    ...appRoutes,
-    REDIRECT_MAIN,
-    NOT_FOUND_ROUTE,
+    {
+      path: '/wallets',
+      name: 'Wallets',
+      component: () => import('@/views/wallets/WalletsView.vue'),
+    },
+    {
+      path: '/wallets/:id',
+      name: 'WalletDetail',
+      component: () => import('@/views/wallets/WalletsView.vue'),
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/signals',
+    },
   ],
   scrollBehavior() {
     return { top: 0 };
   },
 });
-
-createRouteGuard(router);
 
 export default router;

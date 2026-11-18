@@ -74,6 +74,7 @@ export interface NotificationChannel {
 
 export interface AlertHistory {
   id: number;
+  wallet_id?: number;
   alert_type: string;
   level: string;
   message: string;
@@ -133,18 +134,14 @@ export function queryInsiderPortfolio(id: number) {
 export function queryInsiderTransactions(id: number, limit = 100) {
   return axios.get<ListResponse<InsiderTransaction>>(
     `/radar-api/insider/wallets/${id}/transactions`,
-    {
-      params: { limit },
-    }
+    { params: { limit } }
   );
 }
 
 export function queryInsiderAnalytics(id: number, period = 'all') {
   return axios.get<ItemResponse<WalletAnalytics>>(
     `/radar-api/insider/wallets/${id}/analytics`,
-    {
-      params: { period },
-    }
+    { params: { period } }
   );
 }
 

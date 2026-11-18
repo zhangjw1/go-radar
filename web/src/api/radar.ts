@@ -1,7 +1,25 @@
 import axios from 'axios';
 
+export interface HealthJobSpec {
+  name: string;
+  interval_seconds?: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  service: string;
+  app_name: string;
+  time: string;
+  database_ok: boolean;
+  database_path?: string;
+  scheduler_ok: boolean;
+  scheduler_enabled: boolean;
+  jobs?: HealthJobSpec[];
+}
+
 export interface SignalEvent {
   id?: number;
+  token_id?: number;
   source: string;
   chain: string;
   address: string;
@@ -10,9 +28,10 @@ export interface SignalEvent {
   priority: string;
   score: number;
   reason: string;
+  tags_json?: string;
   raw_json?: string;
   created_at: string;
-  pushed_at?: string;
+  pushed_at?: string | null;
 }
 
 export interface ScannerRun {
@@ -21,6 +40,7 @@ export interface ScannerRun {
   status: string;
   signal_count: number;
   snapshot_count: number;
+  metadata_json?: string;
   error?: string;
   started_at: string;
   finished_at?: string;
@@ -34,6 +54,15 @@ export interface WatchlistItem {
   status: string;
   note?: string;
   updated_at: string;
+}
+
+export interface WatchlistUpsertPayload {
+  chain: string;
+  address: string;
+  symbol?: string;
+  name?: string;
+  status: 'watch' | 'active' | 'paused';
+  note?: string;
 }
 
 export interface TokenProfile {
@@ -107,9 +136,13 @@ interface ListResponse<T> {
   pageSize?: number;
 }
 
-interface SettingsResponse {
+export interface SettingsResponse {
   settings: SettingItem[] | Record<string, string | number | boolean>;
   overrides: Record<string, string>;
+}
+
+export function queryHealth() {
+  return axios.get<HealthResponse>('/radar-api/health');
 }
 
 export function querySignals(params?: Record<string, unknown>) {
@@ -117,19 +150,34 @@ export function querySignals(params?: Record<string, unknown>) {
 }
 
 export function queryPushes(params?: Record<string, unknown>) {
-  return axios.get<ListResponse<SignalEvent>>('/radar-api/pushes', { params });
+  return axios.get<SignalsResponse>('/radar-api/pushes', { params });
 }
 
-export function queryJobs() {
-  return axios.get<ListResponse<ScannerRun>>('/radar-api/jobs');
+export function queryJobs(params?: { limit?: number }) {
+  return axios.get<ListResponse<ScannerRun>>('/radar-api/jobs', { params });
 }
 
 export function queryWatchlist() {
   return axios.get<ListResponse<WatchlistItem>>('/radar-api/watchlist');
 }
 
+export function upsertWatchlist(payload: WatchlistUpsertPayload) {
+  return axios.post<{ ok?: boolean; item?: WatchlistItem }>(
+    '/radar-api/watchlist',
+    payload
+  );
+}
+
 export function querySettings() {
   return axios.get<SettingsResponse>('/radar-api/settings');
+}
+
+export function updateSettings(settings: Record<string, string>) {
+  return axios.post('/radar-api/settings', { settings });
+}
+
+export function sendTelegramTest() {
+  return axios.post('/radar-api/telegram/test');
 }
 
 export function queryToken(
@@ -138,7 +186,9 @@ export function queryToken(
   params?: Record<string, unknown>
 ) {
   return axios.get<TokenDetailResponse>(
-    `/radar-api/tokens/${chain}/${address}`,
+    `/radar-api/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(
+      address
+    )}`,
     { params }
   );
 }
